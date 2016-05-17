@@ -29,6 +29,8 @@ enum domain_type {
 #define is_64bit_domain(d) (0)
 #endif
 
+#define MAX_ALTP2M      10 /* arbitrary */
+
 extern int dom0_11_mapping;
 #define is_domain_direct_mapped(d) ((d) == hardware_domain && dom0_11_mapping)
 
@@ -127,6 +129,10 @@ struct arch_domain
     paddr_t efi_acpi_gpa;
     paddr_t efi_acpi_len;
 #endif
+
+    /* altp2m: allow multiple copies of host p2m */
+    bool_t altp2m_active;
+    struct p2m_domain *altp2m_p2m[MAX_ALTP2M];
 }  __cacheline_aligned;
 
 struct arch_vcpu

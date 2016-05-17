@@ -101,6 +101,19 @@ void p2m_altp2m_check(struct vcpu *v, uint16_t idx)
     /* Not supported on ARM. */
 }
 
+static inline
+int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx)
+{
+    /* Not yet supported on ARM. */
+    return -EINVAL;
+}
+
+static inline
+void p2m_flush_altp2m(struct domain *d)
+{
+    /* Not yet supported on ARM. */
+}
+
 #define p2m_is_foreign(_t)  ((_t) == p2m_map_foreign)
 #define p2m_is_ram(_t)      ((_t) == p2m_ram_rw || (_t) == p2m_ram_ro)
 
