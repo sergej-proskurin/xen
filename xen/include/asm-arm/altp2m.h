@@ -22,13 +22,15 @@
 #include <xen/sched.h>
 
 /* Alternate p2m on/off per domain */
-static inline bool_t altp2m_active(const struct domain *d)
+static inline bool_t
+altp2m_active(const struct domain *d)
 {
     return d->arch.altp2m_active;
 }
 
 /* Alternate p2m VCPU */
-static inline uint16_t altp2m_vcpu_idx(const struct vcpu *v)
+static inline uint16_t
+altp2m_vcpu_idx(const struct vcpu *v)
 {
     /* Not implemented on ARM, should not be reached. */
     BUG();

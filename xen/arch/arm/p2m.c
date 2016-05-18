@@ -1910,6 +1910,18 @@ int p2m_get_mem_access(struct domain *d, gfn_t gfn,
     return ret;
 }
 
+struct p2m_domain *p2m_get_altp2m(struct vcpu *v)
+{
+    unsigned int index = vcpu_altp2m(v).p2midx;
+
+    if ( index == INVALID_ALTP2M )
+        return NULL;
+
+    BUG_ON(index >= MAX_ALTP2M);
+
+    return v->domain->arch.altp2m_p2m[index];
+}
+
 /*
  * Local variables:
  * mode: C

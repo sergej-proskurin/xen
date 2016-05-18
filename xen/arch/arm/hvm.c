@@ -34,7 +34,8 @@
 
 #include <asm/altp2m.h>
 
-static int do_altp2m_op(
+static int
+do_altp2m_op(
     XEN_GUEST_HANDLE_PARAM(void) arg)
 {
     struct xen_hvm_altp2m_op a;
@@ -142,7 +143,10 @@ static int do_altp2m_op(
     return rc;
 }
 
-long do_hvm_op(unsigned long op, XEN_GUEST_HANDLE_PARAM(void) arg)
+long
+do_hvm_op(
+    unsigned long op, 
+    XEN_GUEST_HANDLE_PARAM(void) arg)
 {
     long rc = 0;
 
@@ -203,6 +207,13 @@ long do_hvm_op(unsigned long op, XEN_GUEST_HANDLE_PARAM(void) arg)
     }
 
     return rc;
+}
+
+void
+altp2m_vcpu_update_p2m(
+    struct vcpu *v)
+{
+    /* TODO: To be implemented for ARM. */
 }
 
 /*

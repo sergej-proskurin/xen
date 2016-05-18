@@ -30,6 +30,7 @@ enum domain_type {
 #endif
 
 #define MAX_ALTP2M      10 /* arbitrary */
+#define INVALID_ALTP2M  0xffff
 
 extern int dom0_11_mapping;
 #define is_domain_direct_mapped(d) ((d) == hardware_domain && dom0_11_mapping)
@@ -134,6 +135,12 @@ struct arch_domain
     bool_t altp2m_active;
     struct p2m_domain *altp2m_p2m[MAX_ALTP2M];
 }  __cacheline_aligned;
+
+struct altp2mvcpu {
+    uint16_t p2midx;         /* alternate p2m index */
+};
+
+#define vcpu_altp2m(v) ((v)->arch.avcpu)
 
 struct arch_vcpu
 {
@@ -264,6 +271,9 @@ struct arch_vcpu
     struct vtimer phys_timer;
     struct vtimer virt_timer;
     bool_t vtimer_initialized;
+
+    /* Alternate p2m context */
+    struct altp2mvcpu avcpu;
 }  __cacheline_aligned;
 
 void vcpu_show_execution_state(struct vcpu *);
