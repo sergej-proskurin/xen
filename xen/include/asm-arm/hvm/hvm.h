@@ -21,6 +21,21 @@
 
 #include <xen/sched.h>
 
+struct hvm_function_table {
+    char *name;
+
+    /* Necessary hardware support for alternate p2m's? */
+    bool_t altp2m_supported;
+};
+
+extern struct hvm_function_table hvm_funcs;
+
+/* returns true if hardware supports alternate p2m's */
+static inline bool_t hvm_altp2m_supported(void)
+{
+    return hvm_funcs.altp2m_supported;
+}
+
 void altp2m_vcpu_update_p2m(struct vcpu *v);
 
 #endif /* __ASM_ARM_HVM_HVM_H__ */

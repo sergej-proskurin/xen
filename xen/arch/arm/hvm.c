@@ -33,6 +33,30 @@
 #include <asm/hypercall.h>
 
 #include <asm/altp2m.h>
+#include <asm/hvm/hvm.h>
+
+/* Xen command-line option to enable altp2m */
+static bool_t __initdata opt_altp2m_enabled = 0;
+boolean_param("altp2m", opt_altp2m_enabled);
+
+// static struct hvm_function_table __initdata __hvm_funcs = {
+//     .name = "ARM_HVM",
+// };
+
+struct hvm_function_table hvm_funcs __read_mostly = {
+    .name = "ARM_HVM",   
+};
+
+static int __init hvm_enable(void)
+{
+    if ( opt_altp2m_enabled )
+        hvm_funcs.altp2m_supported = 1;
+    else
+        hvm_funcs.altp2m_supported = 0;
+    
+    return 0;
+}
+presmp_initcall(hvm_enable);
 
 static int
 do_altp2m_op(
@@ -42,13 +66,12 @@ do_altp2m_op(
     struct domain *d = NULL;
     int rc = 0;
 
-    /* TODO: Do we really need an hvm interface on ARM (?) */
-//     if ( !hvm_altp2m_supported() )
-//         return -EOPNOTSUPP;
+    if ( !hvm_altp2m_supported() )
+        return -EOPNOTSUPP;
 
     if ( copy_from_guest(&a, arg, 1) )
         return -EFAULT;
-
+    
     if ( a.pad1 || a.pad2 ||
          (a.version != HVMOP_ALTP2M_INTERFACE_VERSION) ||
          (a.cmd < HVMOP_altp2m_get_domain_state) ||
@@ -76,9 +99,8 @@ do_altp2m_op(
         goto out;
     }
 
-    /* TODO: no XSM support yet */
-//    if ( (rc = xsm_hvm_altp2mhvm_op(XSM_TARGET, d)) )
-//        goto out;
+    if ( (rc = xsm_hvm_altp2mhvm_op(XSM_TARGET, d)) )
+        goto out;
 
     switch ( a.cmd )
     {
@@ -98,6 +120,12 @@ do_altp2m_op(
         struct vcpu *v;
         bool_t ostate;
 
+/* TEST */
+        dprintk(XENLOG_INFO, "[DBG] do_altp2m_op: HVMOP_altp2m_set_domain_state - ok\n");
+        dprintk(XENLOG_INFO, "[DBG] do_altp2m_op: d->arch.hvm_domain.params[HVM_PARAM_ALTP2M]: %lld\n",
+            d->arch.hvm_domain.params[HVM_PARAM_ALTP2M]);
+/* TEST END */
+
         /* TODO: No nestedhvm support on ARM (yet ?) */
         if ( !d->arch.hvm_domain.params[HVM_PARAM_ALTP2M] ) // ||
 //             nestedhvm_enabled(d) )
@@ -105,6 +133,10 @@ do_altp2m_op(
             rc = -EINVAL;
             break;
         }
+
+/* TEST */
+        dprintk(XENLOG_INFO, "[DBG] do_altp2m_op: !d->arch.hvm_domain.params[HVM_PARAM_ALTP2M] - ok\n");
+/* TEST END */
 
         ostate = d->arch.altp2m_active;
         d->arch.altp2m_active = !!a.u.domain_state.state;
@@ -124,6 +156,7 @@ do_altp2m_op(
             if ( ostate )
                 p2m_flush_altp2m(d);
         }
+
         break;
     }
 
@@ -174,6 +207,9 @@ do_hvm_op(
 
         if ( op == HVMOP_set_param )
         {
+/* TEST */
+            dprintk(XENLOG_INFO, "[DBG] do_hvm_op: HVMOP_set_param: %lld\n", a.value);
+/* TEST END */
             d->arch.hvm_domain.params[a.index] = a.value;
         }
         else
@@ -195,6 +231,9 @@ do_hvm_op(
         break;
 
     case HVMOP_altp2m:
+/* TEST */
+        dprintk(XENLOG_INFO, "[DBG] do_hvm_op: HVMOP_altp2m\n");
+/* TEST END */
         rc = do_altp2m_op(arg);
         break;
 
