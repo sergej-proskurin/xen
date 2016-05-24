@@ -134,6 +134,9 @@ struct arch_domain
     /* altp2m: allow multiple copies of host p2m */
     bool_t altp2m_active;
     struct p2m_domain *altp2m_p2m[MAX_ALTP2M];
+    spinlock_t altp2m_lock;
+    /* TODO: Think about dynamically allocating altp2m_vttbr[] */
+    uint64_t altp2m_vttbr[MAX_ALTP2M];
 }  __cacheline_aligned;
 
 struct altp2mvcpu {

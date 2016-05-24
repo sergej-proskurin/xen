@@ -18,6 +18,12 @@ struct domain;
 
 extern void memory_type_changed(struct domain *);
 
+typedef enum {
+    p2m_host,
+    p2m_alternate,
+} p2m_class_t;
+
+
 /* Per-p2m-table state */
 struct p2m_domain {
     /* Lock that protects updates to the p2m */
@@ -70,6 +76,12 @@ struct p2m_domain {
 
     /* Alternate p2m: count of vcpu's currently using this p2m. */
     atomic_t active_vcpus;
+
+    /* Choose between: host/alternate */
+    p2m_class_t p2m_class;
+
+    /* Back pointer to domain */
+    struct domain     *domain;
 };
 
 /* List of possible type for each page in the p2m entry.

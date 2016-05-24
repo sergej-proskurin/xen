@@ -1422,7 +1422,40 @@ void p2m_teardown(struct domain *d)
     spin_unlock(&p2m->lock);
 }
 
-int p2m_init(struct domain *d)
+static int p2m_initialise(struct domain *d, struct p2m_domain *p2m)
+{
+    int ret = 0;
+
+    /* TODO */
+
+    spin_lock_init(&p2m->lock);
+    INIT_PAGE_LIST_HEAD(&p2m->pages);
+
+    p2m->domain = d;
+    p2m->default_access = p2m_access_rwx;
+    p2m->p2m_class = p2m_host;
+    return ret;
+}
+
+
+static struct p2m_domain *p2m_init_one(struct domain *d)
+{
+    struct p2m_domain *p2m = xzalloc(struct p2m_domain);
+
+    if ( !p2m )
+        return NULL;
+
+    if ( p2m_initialise(d, p2m) )
+        goto free_p2m;
+
+    return p2m;
+
+free_p2m:
+    xfree(p2m);
+    return NULL;
+}
+
+static int p2m_init_hostp2m(struct domain *d)
 {
     struct p2m_domain *p2m = &d->arch.p2m;
     int rc = 0;
@@ -1450,6 +1483,54 @@ int p2m_init(struct domain *d)
 
 err:
     spin_unlock(&p2m->lock);
+
+    return rc;
+}
+
+static void p2m_teardown_hostp2m(struct domain *d)
+{
+    /* TODO */
+}
+
+static void p2m_teardown_altp2m(struct domain *d)
+{
+    /* TODO */
+}
+
+static int p2m_init_altp2m(struct domain *d)
+{
+    unsigned int i;
+    struct p2m_domain *p2m;
+
+    spin_lock_init(&d->arch.altp2m_lock);
+    for ( i = 0; i < MAX_ALTP2M; i++ )
+    {
+        d->arch.altp2m_vttbr[i] = 0;
+        d->arch.altp2m_p2m[i] = p2m = p2m_init_one(d);
+        if ( p2m == NULL )
+        {
+            p2m_teardown_altp2m(d);
+            return -ENOMEM;
+        }
+        p2m->p2m_class = p2m_alternate;
+        p2m->access_required = 1;
+        _atomic_set(&p2m->active_vcpus, 0);
+    }
+
+    return 0;
+}
+
+int p2m_init(struct domain *d)
+{
+    int rc = 0;
+
+    rc = p2m_init_hostp2m(d);
+    if ( rc )
+        return rc;
+
+    rc = p2m_init_altp2m(d);
+    if ( rc )
+        p2m_teardown_hostp2m(d);
 
     return rc;
 }
@@ -1909,6 +1990,8 @@ int p2m_get_mem_access(struct domain *d, gfn_t gfn,
 
     return ret;
 }
+
+
 
 struct p2m_domain *p2m_get_altp2m(struct vcpu *v)
 {
