@@ -1417,8 +1417,12 @@ static int p2m_initialise(struct domain *d, struct p2m_domain *p2m)
     p2m->mem_access_enabled = false;
     p2m->default_access = p2m_access_rwx;
     p2m->p2m_class = p2m_host;
-    p2m->vmid = INVALID_VMID;
+    p2m->vmid = d->arch.p2m.vmid; // INVALID_VMID;
     p2m->root = NULL;
+
+    /* Adopt VMID of the associated domain */
+    p2m->vttbr.vttbr = 0;
+    p2m->vttbr.vttbr_vmid = p2m->vmid;
 
     p2m->max_mapped_gfn = 0;
     p2m->lowest_mapped_gfn = ULONG_MAX;
@@ -1435,20 +1439,21 @@ static void p2m_free_one(struct p2m_domain *p2m)
 
     /* TODO: Do we need dirty_cpumask? */
     //free_cpumask_var(p2m->dirty_cpumask);
-    
+
     spin_lock(&p2m->lock);
 
     while ( (pg = page_list_remove_head(&p2m->pages)) )
         free_domheap_page(pg);
 
-    free_domheap_pages(p2m->root, P2M_ROOT_ORDER);
+    /* FIXME: Why does this crash the system? */
+    //free_domheap_pages(p2m->root, P2M_ROOT_ORDER);
 
     p2m->root = NULL;
 
     radix_tree_destroy(&p2m->mem_access_settings, NULL);
 
     spin_unlock(&p2m->lock);
-    
+
     xfree(p2m);
 }
 
@@ -1505,6 +1510,12 @@ static int p2m_init_hostp2m(struct domain *d)
     if ( rc != 0 )
         goto err;
 
+    p2m->vttbr.vttbr_vmid = p2m->vmid;
+
+/* TEST */
+    printk(XENLOG_INFO "[DBG] p2m_init_hostp2m: VMID=%d (%d)\n", p2m->vmid, p2m->vttbr.vttbr_vmid);
+/* TEST END */
+
     d->arch.vttbr = 0;
 
     p2m->root = NULL;
@@ -1531,6 +1542,7 @@ static void p2m_teardown_altp2m(struct domain *d)
     {
         if ( !d->arch.altp2m_p2m[i] )
             continue;
+
         p2m = d->arch.altp2m_p2m[i];
         d->arch.altp2m_p2m[i] = NULL;
         p2m_free_one(p2m);
@@ -1570,7 +1582,6 @@ void p2m_teardown(struct domain *d)
      */
     p2m_teardown_altp2m(d);
 
-    /* Iterate over all p2m tables per domain */
     p2m_teardown_hostp2m(d);
 }
 
@@ -2057,6 +2068,48 @@ struct p2m_domain *p2m_get_altp2m(struct vcpu *v)
     BUG_ON(index >= MAX_ALTP2M);
 
     return v->domain->arch.altp2m_p2m[index];
+}
+
+static void p2m_init_altp2m_helper(struct domain *d, unsigned int i)
+{
+    struct p2m_domain *p2m = d->arch.altp2m_p2m[i];
+    struct vttbr_data *vttbr = &p2m->vttbr;
+
+    /* TODO: Think about chaning the name "lowest_mapped_gfn" to "min_mapped_gfn" */
+    p2m->lowest_mapped_gfn = INVALID_GFN;
+    p2m->max_mapped_gfn = 0;
+
+    /* TODO: page_to_maddr returns a 48-bit value. bttbr_baddr is 40 bit long? */
+    vttbr->vttbr_baddr = page_to_maddr(p2m->root);
+    vttbr->vttbr_vmid = p2m->vmid;
+
+    /* TODO: Do we really need an additional vttbr? */
+    d->arch.altp2m_vttbr[i] = vttbr->vttbr;
+
+/* TEST */
+    printk(XENLOG_INFO "[DBG] dom%d: VMID=0x%d VTTBR=0x%llx\n",
+            d->domain_id, vttbr->vttbr_vmid, vttbr->vttbr);
+/* TEST END */
+}
+
+int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx)
+{
+    int rc = -EINVAL;
+
+    if ( idx >= MAX_ALTP2M )
+        return rc;
+
+    altp2m_lock(d);
+
+    if ( !d->arch.altp2m_vttbr[idx] )
+    {
+        p2m_init_altp2m_helper(d, idx);
+        rc = 0;
+    }
+
+    altp2m_unlock(d);
+
+    return rc;
 }
 
 /*

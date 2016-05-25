@@ -19,7 +19,18 @@
 #ifndef __ASM_ARM_HVM_HVM_H__
 #define __ASM_ARM_HVM_HVM_H__
 
-#include <xen/sched.h>
+struct vttbr_data {
+    union {
+        struct {
+            u64 vttbr_baddr :40, /* variable res0: from 0-(x-1) bit */
+                res1        :8,
+                vttbr_vmid  :8,
+                res2        :8;
+        };
+        u64 vttbr;
+    };
+    /* TODO: Do we need an "invalidate" set of PCPUs? */
+};
 
 struct hvm_function_table {
     char *name;

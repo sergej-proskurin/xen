@@ -9,6 +9,8 @@
 #include <public/memory.h>
 #include <asm/atomic.h>
 
+#include <asm/hvm/hvm.h>
+
 #define paddr_bits PADDR_BITS
 
 /* Holds the bit size of IPAs in p2m tables.  */
@@ -81,7 +83,9 @@ struct p2m_domain {
     p2m_class_t p2m_class;
 
     /* Back pointer to domain */
-    struct domain     *domain;
+    struct domain *domain;
+
+    struct vttbr_data vttbr;
 };
 
 /* List of possible type for each page in the p2m entry.
@@ -115,6 +119,9 @@ void p2m_mem_access_emulate_check(struct vcpu *v,
  * Alternate p2m: shadow p2m tables used for alternate memory views
  */
 
+#define altp2m_lock(d)      spin_lock(&(d)->arch.altp2m_lock)
+#define altp2m_unlock(d)    spin_unlock(&(d)->arch.altp2m_lock)
+
 /* Get current alternate p2m table */
 struct p2m_domain *p2m_get_altp2m(struct vcpu *v);
 
@@ -133,12 +140,7 @@ void p2m_flush_altp2m(struct domain *d)
 }
 
 /* Make a specific alternate p2m valid */
-static inline
-int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx)
-{
-    /* Not yet supported on ARM. */
-    return -EINVAL;
-}
+int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx);
 
 #define p2m_is_foreign(_t)  ((_t) == p2m_map_foreign)
 #define p2m_is_ram(_t)      ((_t) == p2m_ram_rw || (_t) == p2m_ram_ro)
