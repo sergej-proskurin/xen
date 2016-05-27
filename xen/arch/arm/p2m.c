@@ -1316,9 +1316,8 @@ void guest_physmap_remove_page(struct domain *d,
                       d->arch.p2m.default_access);
 }
 
-int p2m_alloc_table(struct domain *d)
+static int p2m_alloc_table(struct p2m_domain *p2m)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
     struct page_info *page;
     unsigned int i;
 
@@ -1326,25 +1325,59 @@ int p2m_alloc_table(struct domain *d)
     if ( page == NULL )
         return -ENOMEM;
 
-    spin_lock(&p2m->lock);
-
     /* Clear both first level pages */
     for ( i = 0; i < P2M_ROOT_PAGES; i++ )
         clear_and_clean_page(page + i);
 
     p2m->root = page;
 
-    d->arch.vttbr = page_to_maddr(p2m->root)
-        | ((uint64_t)p2m->vmid&0xff)<<48;
-
-    /* Make sure that all TLBs corresponding to the new VMID are flushed
-     * before using it
-     */
-    flush_tlb_domain(d);
-
-    spin_unlock(&p2m->lock);
+    p2m->vttbr.vttbr = 0;
+    p2m->vttbr.vttbr_vmid = p2m->vmid & 0xff;
+    p2m->vttbr.vttbr_baddr = page_to_maddr(p2m->root);
 
     return 0;
+}
+
+int p2m_table_init(struct domain *d)
+{
+    int i = 0;
+    int rc = -ENOMEM; 
+    struct p2m_domain *p2m = &d->arch.p2m;
+   
+    spin_lock(&p2m->lock);
+
+    rc = p2m_alloc_table(p2m);
+    if ( rc != 0 )
+        goto out;
+
+    /* TODO: Think about removing d->arch.vttbr as it is part of p2m_domain */
+    d->arch.vttbr = d->arch.p2m.vttbr.vttbr;
+    
+    /* Make sure that all TLBs corresponding to the new VMID are flushed
+     * before using it.
+     */
+    flush_tlb_domain(d);
+    
+    spin_unlock(&p2m->lock);
+
+    if ( hvm_altp2m_supported() )
+    {
+        /* Init alternate p2m data */
+        for ( i=0; i < MAX_ALTP2M; i++ )
+            d->arch.altp2m_vttbr[i] = INVALID_MFN;
+
+        for ( i = 0; i < MAX_ALTP2M; i++ )
+        {
+            rc = p2m_alloc_table(d->arch.altp2m_p2m[i]);
+            if ( rc != 0 )
+                goto out;
+        }
+
+        d->arch.altp2m_active = 0;
+    }
+
+out:
+    return rc;
 }
 
 #define MAX_VMID 256
@@ -2085,6 +2118,8 @@ static void p2m_init_altp2m_helper(struct domain *d, unsigned int i)
     d->arch.altp2m_vttbr[i] = vttbr->vttbr;
 
 /* TEST */
+    printk(XENLOG_INFO "[DBG] dom%d: page_to_maddr(NULL)=%llx\n",
+            d->domain_id, page_to_maddr((struct page_info *)NULL));
     printk(XENLOG_INFO "[DBG] dom%d: VMID=0x%d VTTBR=0x%llx\n",
             d->domain_id, vttbr->vttbr_vmid, vttbr->vttbr);
 /* TEST END */
@@ -2099,7 +2134,7 @@ int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx)
 
     altp2m_lock(d);
 
-    if ( d->arch.altp2m_vttbr[idx] != INVALID_MFN )
+    if ( d->arch.altp2m_vttbr[idx] == INVALID_MFN )
     {
         p2m_init_altp2m_helper(d, idx);
         rc = 0;
