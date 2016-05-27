@@ -142,6 +142,10 @@ void p2m_flush_altp2m(struct domain *d)
 /* Make a specific alternate p2m valid */
 int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx);
 
+/* Find an available alternate p2m and make it valid */
+int p2m_init_next_altp2m(struct domain *d, uint16_t *idx);
+
+
 #define p2m_is_foreign(_t)  ((_t) == p2m_map_foreign)
 #define p2m_is_ram(_t)      ((_t) == p2m_ram_rw || (_t) == p2m_ram_ro)
 

@@ -44,7 +44,7 @@ boolean_param("altp2m", opt_altp2m_enabled);
 // };
 
 struct hvm_function_table hvm_funcs __read_mostly = {
-    .name = "ARM_HVM",   
+    .name = "ARM_HVM",
 };
 
 static int __init hvm_enable(void)
@@ -53,7 +53,7 @@ static int __init hvm_enable(void)
         hvm_funcs.altp2m_supported = 1;
     else
         hvm_funcs.altp2m_supported = 0;
-    
+
     return 0;
 }
 presmp_initcall(hvm_enable);
@@ -71,7 +71,7 @@ do_altp2m_op(
 
     if ( copy_from_guest(&a, arg, 1) )
         return -EFAULT;
-    
+
     if ( a.pad1 || a.pad2 ||
          (a.version != HVMOP_ALTP2M_INTERFACE_VERSION) ||
          (a.cmd < HVMOP_altp2m_get_domain_state) ||
@@ -163,6 +163,10 @@ do_altp2m_op(
     /* TODO: implement following cases. */
     case HVMOP_altp2m_vcpu_enable_notify:
     case HVMOP_altp2m_create_p2m:
+        if ( !(rc = p2m_init_next_altp2m(d, &a.u.view.view)) )
+            rc = __copy_to_guest(arg, &a, 1) ? -EFAULT : 0;
+        break;
+
     case HVMOP_altp2m_destroy_p2m:
     case HVMOP_altp2m_switch_p2m:
     case HVMOP_altp2m_set_mem_access:
@@ -170,7 +174,7 @@ do_altp2m_op(
         break;
     }
 
- out: 
+ out:
     rcu_unlock_domain(d);
 
     return rc;
@@ -178,7 +182,7 @@ do_altp2m_op(
 
 long
 do_hvm_op(
-    unsigned long op, 
+    unsigned long op,
     XEN_GUEST_HANDLE_PARAM(void) arg)
 {
     long rc = 0;
