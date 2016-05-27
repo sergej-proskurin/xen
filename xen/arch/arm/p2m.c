@@ -1478,8 +1478,7 @@ static void p2m_free_one(struct p2m_domain *p2m)
     while ( (pg = page_list_remove_head(&p2m->pages)) )
         free_domheap_page(pg);
 
-    /* FIXME: Why does this crash the system? */
-    //free_domheap_pages(p2m->root, P2M_ROOT_ORDER);
+    free_domheap_pages(p2m->root, P2M_ROOT_ORDER);
 
     p2m->root = NULL;
 
