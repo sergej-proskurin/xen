@@ -120,12 +120,6 @@ do_altp2m_op(
         struct vcpu *v;
         bool_t ostate;
 
-/* TEST */
-        dprintk(XENLOG_INFO, "[DBG] do_altp2m_op: HVMOP_altp2m_set_domain_state - ok\n");
-        dprintk(XENLOG_INFO, "[DBG] do_altp2m_op: d->arch.hvm_domain.params[HVM_PARAM_ALTP2M]: %lld\n",
-            d->arch.hvm_domain.params[HVM_PARAM_ALTP2M]);
-/* TEST END */
-
         /* TODO: No nestedhvm support on ARM (yet ?) */
         if ( !d->arch.hvm_domain.params[HVM_PARAM_ALTP2M] ) // ||
 //             nestedhvm_enabled(d) )
@@ -133,10 +127,6 @@ do_altp2m_op(
             rc = -EINVAL;
             break;
         }
-
-/* TEST */
-        dprintk(XENLOG_INFO, "[DBG] do_altp2m_op: !d->arch.hvm_domain.params[HVM_PARAM_ALTP2M] - ok\n");
-/* TEST END */
 
         ostate = d->arch.altp2m_active;
         d->arch.altp2m_active = !!a.u.domain_state.state;
@@ -170,6 +160,15 @@ do_altp2m_op(
     case HVMOP_altp2m_destroy_p2m:
     case HVMOP_altp2m_switch_p2m:
     case HVMOP_altp2m_set_mem_access:
+        if ( a.u.set_mem_access.pad )
+            rc = -EINVAL;
+        else
+            rc = p2m_set_mem_access(d, _gfn(a.u.set_mem_access.gfn), 1, 0, 0,
+                                    a.u.set_mem_access.hvmmem_access,
+                                    a.u.set_mem_access.view);
+
+        break;
+
     case HVMOP_altp2m_change_gfn:
         break;
     }
@@ -211,9 +210,6 @@ do_hvm_op(
 
         if ( op == HVMOP_set_param )
         {
-/* TEST */
-            dprintk(XENLOG_INFO, "[DBG] do_hvm_op: HVMOP_set_param: %lld\n", a.value);
-/* TEST END */
             d->arch.hvm_domain.params[a.index] = a.value;
         }
         else
@@ -235,9 +231,6 @@ do_hvm_op(
         break;
 
     case HVMOP_altp2m:
-/* TEST */
-        dprintk(XENLOG_INFO, "[DBG] do_hvm_op: HVMOP_altp2m\n");
-/* TEST END */
         rc = do_altp2m_op(arg);
         break;
 
