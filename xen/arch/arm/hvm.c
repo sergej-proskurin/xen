@@ -58,9 +58,7 @@ static int __init hvm_enable(void)
 }
 presmp_initcall(hvm_enable);
 
-static int
-do_altp2m_op(
-    XEN_GUEST_HANDLE_PARAM(void) arg)
+static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
 {
     struct xen_hvm_altp2m_op a;
     struct domain *d = NULL;
@@ -152,13 +150,20 @@ do_altp2m_op(
 
     /* TODO: implement following cases. */
     case HVMOP_altp2m_vcpu_enable_notify:
+        break;
+
     case HVMOP_altp2m_create_p2m:
         if ( !(rc = p2m_init_next_altp2m(d, &a.u.view.view)) )
             rc = __copy_to_guest(arg, &a, 1) ? -EFAULT : 0;
         break;
 
     case HVMOP_altp2m_destroy_p2m:
+        break;
+
     case HVMOP_altp2m_switch_p2m:
+        rc = p2m_switch_domain_altp2m_by_id(d, a.u.view.view);
+        break;
+
     case HVMOP_altp2m_set_mem_access:
         if ( a.u.set_mem_access.pad )
             rc = -EINVAL;
@@ -179,10 +184,7 @@ do_altp2m_op(
     return rc;
 }
 
-long
-do_hvm_op(
-    unsigned long op,
-    XEN_GUEST_HANDLE_PARAM(void) arg)
+long do_hvm_op(unsigned long op, XEN_GUEST_HANDLE_PARAM(void) arg)
 {
     long rc = 0;
 
@@ -243,13 +245,6 @@ do_hvm_op(
     }
 
     return rc;
-}
-
-void
-altp2m_vcpu_update_p2m(
-    struct vcpu *v)
-{
-    /* TODO: To be implemented for ARM. */
 }
 
 /*

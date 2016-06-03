@@ -39,8 +39,6 @@ altp2m_vcpu_initialise(struct vcpu *v)
     vcpu_altp2m(v).p2midx = 0;
     atomic_inc(&p2m_get_altp2m(v)->active_vcpus);
 
-    altp2m_vcpu_update_p2m(v);
-
     if ( v != current )
         vcpu_unpause(v);
 }
@@ -57,8 +55,6 @@ altp2m_vcpu_destroy(struct vcpu *v)
         atomic_dec(&p2m->active_vcpus);
 
     altp2m_vcpu_reset(v);
-
-    altp2m_vcpu_update_p2m(v);
 
     if ( v != current )
         vcpu_unpause(v);

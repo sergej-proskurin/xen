@@ -47,8 +47,6 @@ static inline bool_t hvm_altp2m_supported(void)
     return hvm_funcs.altp2m_supported;
 }
 
-void altp2m_vcpu_update_p2m(struct vcpu *v);
-
 #endif /* __ASM_ARM_HVM_HVM_H__ */
 
 /*
