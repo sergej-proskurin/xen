@@ -139,6 +139,10 @@ void p2m_flush_altp2m(struct domain *d)
     /* Not yet supported on ARM. */
 }
 
+/* Alternate p2m paging */
+bool_t p2m_altp2m_lazy_copy(struct vcpu *v, paddr_t gpa,
+    unsigned long gla, struct npfec npfec, struct p2m_domain **ap2m);
+
 /* Make a specific alternate p2m valid */
 int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx);
 

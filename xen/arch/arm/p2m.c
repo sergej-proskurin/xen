@@ -188,9 +188,8 @@ void flush_tlb_domain(struct domain *d)
  * There are no processor functions to do a stage 2 only lookup therefore we
  * do a a software walk.
  */
-static paddr_t __p2m_lookup(struct domain *d, paddr_t paddr, p2m_type_t *t)
+static paddr_t __p2m_lookup(struct p2m_domain *p2m, paddr_t paddr, p2m_type_t *t)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
     const unsigned int offsets[4] = {
         zeroeth_table_offset(paddr),
         first_table_offset(paddr),
@@ -270,10 +269,16 @@ err:
 paddr_t p2m_lookup(struct domain *d, paddr_t paddr, p2m_type_t *t)
 {
     paddr_t ret;
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct vcpu *v = current;
+    struct p2m_domain *p2m = NULL;
+
+    if ( altp2m_active(d) )
+        p2m = p2m_get_altp2m(v);
+    else
+        p2m = p2m_get_hostp2m(d);
 
     spin_lock(&p2m->lock);
-    ret = __p2m_lookup(d, paddr, t);
+    ret = __p2m_lookup(p2m, paddr, t);
     spin_unlock(&p2m->lock);
 
     return ret;
@@ -492,10 +497,9 @@ static int p2m_create_table(struct domain *d,
     return 0;
 }
 
-static int __p2m_get_mem_access(struct domain *d, gfn_t gfn,
+static int __p2m_get_mem_access(struct p2m_domain *p2m, gfn_t gfn,
                                 xenmem_access_t *access)
 {
-    struct p2m_domain *p2m = p2m_get_hostp2m(d);
     void *i;
     unsigned int index;
 
@@ -538,7 +542,7 @@ static int __p2m_get_mem_access(struct domain *d, gfn_t gfn,
          * No setting was found in the Radix tree. Check if the
          * entry exists in the page-tables.
          */
-        paddr_t maddr = __p2m_lookup(d, gfn_x(gfn) << PAGE_SHIFT, NULL);
+        paddr_t maddr = __p2m_lookup(p2m, gfn_x(gfn) << PAGE_SHIFT, NULL);
         if ( INVALID_PADDR == maddr )
             return -ESRCH;
 
@@ -1736,16 +1740,24 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag)
     xenmem_access_t xma;
     p2m_type_t t;
     struct page_info *page = NULL;
+    struct p2m_domain *p2m = NULL;
+    struct vcpu *v = current;
+    struct domain *d = v->domain;
 
     rc = gva_to_ipa(gva, &ipa, flag);
     if ( rc < 0 )
         goto err;
 
+    if ( altp2m_active(d) )
+        p2m = p2m_get_altp2m(v);
+    else
+        p2m = p2m_get_hostp2m(d);
+
     /*
      * We do this first as this is faster in the default case when no
      * permission is set on the page.
      */
-    rc = __p2m_get_mem_access(current->domain, _gfn(paddr_to_pfn(ipa)), &xma);
+    rc = __p2m_get_mem_access(p2m, _gfn(paddr_to_pfn(ipa)), &xma);
     if ( rc < 0 )
         goto err;
 
@@ -1794,7 +1806,7 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag)
      * We had a mem_access permission limiting the access, but the page type
      * could also be limiting, so we need to check that as well.
      */
-    maddr = __p2m_lookup(current->domain, ipa, &t);
+    maddr = __p2m_lookup(p2m, ipa, &t);
     if ( maddr == INVALID_PADDR )
         goto err;
 
@@ -1958,13 +1970,19 @@ bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
     xenmem_access_t xma;
     vm_event_request_t *req;
     struct vcpu *v = current;
-    struct p2m_domain *p2m = p2m_get_hostp2m(v->domain);
+    struct domain *d = v->domain;
+    struct p2m_domain *p2m = NULL;
+
+    if ( altp2m_active(d) )
+        p2m = p2m_get_altp2m(v);
+    if ( !p2m )
+        p2m = p2m_get_hostp2m(d);
 
     /* Mem_access is not in use. */
     if ( !p2m->mem_access_enabled )
         return true;
 
-    rc = p2m_get_mem_access(v->domain, _gfn(paddr_to_pfn(gpa)), &xma);
+    rc = p2m_get_mem_access(d, _gfn(paddr_to_pfn(gpa)), &xma);
     if ( rc )
         return true;
 
@@ -2160,10 +2178,16 @@ int p2m_get_mem_access(struct domain *d, gfn_t gfn,
                        xenmem_access_t *access)
 {
     int ret;
-    struct p2m_domain *p2m = p2m_get_hostp2m(d);
+    struct vcpu *v = current;
+    struct p2m_domain *p2m = NULL;
+
+    if ( altp2m_active(d) )
+        p2m = p2m_get_altp2m(v);
+    if ( !p2m )
+        p2m = p2m_get_hostp2m(d);
 
     spin_lock(&p2m->lock);
-    ret = __p2m_get_mem_access(d, gfn, access);
+    ret = __p2m_get_mem_access(p2m, gfn, access);
     spin_unlock(&p2m->lock);
 
     return ret;
@@ -2179,6 +2203,106 @@ struct p2m_domain *p2m_get_altp2m(struct vcpu *v)
     BUG_ON(index >= MAX_ALTP2M);
 
     return v->domain->arch.altp2m_p2m[index];
+}
+
+/*
+ * If the fault is for a not present entry:
+ *     if the entry in the host p2m has a valid mfn, copy it and retry
+ *     else indicate that outer handler should handle fault
+ *
+ * If the fault is for a present entry:
+ *     indicate that outer handler should handle fault
+ */
+bool_t p2m_altp2m_lazy_copy(struct vcpu *v, paddr_t gpa,
+                            unsigned long gva, struct npfec npfec,
+                            struct p2m_domain **ap2m)
+{
+    struct domain *d = v->domain;
+    struct p2m_domain *hp2m = p2m_get_hostp2m(v->domain);
+    p2m_type_t p2mt;
+    xenmem_access_t xma;
+    paddr_t maddr;
+//     unsigned int page_order;
+    gfn_t gfn = _gfn(paddr_to_pfn(gpa));
+//     unsigned long mask;
+//     mfn_t mfn;
+    int rc = 0;
+
+    static const p2m_access_t memaccess[] = {
+#define ACCESS(ac) [XENMEM_access_##ac] = p2m_access_##ac
+        ACCESS(n),
+        ACCESS(r),
+        ACCESS(w),
+        ACCESS(rw),
+        ACCESS(x),
+        ACCESS(rx),
+        ACCESS(wx),
+        ACCESS(rwx),
+        ACCESS(rx2rw),
+        ACCESS(n2rwx),
+#undef ACCESS
+    };
+
+    *ap2m = p2m_get_altp2m(v);
+
+    /* Check if entry is part of the altp2m view */
+    maddr = __p2m_lookup(*ap2m, gpa, &p2mt);
+    if ( maddr != INVALID_PADDR )
+        return 0;
+
+    /* Check if entry is part of the host p2m view */
+    maddr = __p2m_lookup(hp2m, gpa, NULL);
+    if ( maddr == INVALID_PADDR )
+        return 0;
+
+   rc = __p2m_get_mem_access(hp2m, gfn, &xma);
+
+    spin_lock(&(*ap2m)->lock);
+
+    rc = apply_p2m_changes(d, *ap2m, ALLOCATE,
+                           pfn_to_paddr(gfn_x(gfn)),
+                           pfn_to_paddr(gfn_x(gfn) + 1),
+                           0, MATTR_MEM, 0, p2mt,
+                           memaccess[xma]);
+
+    spin_unlock(&(*ap2m)->lock);
+
+
+//     mfn = get_gfn_type_access(*ap2m, gfn_x(gfn), &p2mt, &p2ma,
+//                               0, &page_order);
+//     __put_gfn(*ap2m, gfn_x(gfn));
+//
+//     if ( mfn_x(mfn) != INVALID_MFN )
+//         return 0;
+//
+//     mfn = get_gfn_type_access(hp2m, gfn_x(gfn), &p2mt, &p2ma,
+//                               P2M_ALLOC | P2M_UNSHARE, &page_order);
+//     __put_gfn(hp2m, gfn_x(gfn));
+//
+//     if ( mfn_x(mfn) == INVALID_MFN )
+//         return 0;
+//
+//     p2m_lock(*ap2m);
+//
+//     /*
+//      * If this is a superpage mapping, round down both frame numbers
+//      * to the start of the superpage.
+//      */
+//     mask = ~((1UL << page_order) - 1);
+//     mfn = _mfn(mfn_x(mfn) & mask);
+//
+//     rv = p2m_set_entry(*ap2m, gfn_x(gfn) & mask, mfn, page_order, p2mt, p2ma);
+//     p2m_unlock(*ap2m);
+//
+//     if ( rv )
+//     {
+//         gdprintk(XENLOG_ERR,
+//             "failed to set entry for %#"PRIx64" -> %#"PRIx64" p2m %#"PRIx64"\n",
+//             gfn_x(gfn), mfn_x(mfn), (unsigned long)*ap2m);
+//         domain_crash(hp2m->domain);
+//     }
+//
+    return 1;
 }
 
 static void p2m_init_altp2m_helper(struct domain *d, unsigned int i)

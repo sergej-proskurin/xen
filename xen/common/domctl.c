@@ -718,13 +718,10 @@ long do_domctl(XEN_GUEST_HANDLE_PARAM(xen_domctl_t) u_domctl)
         break;
 
     case XEN_DOMCTL_destroydomain:
-/* TEST */
-        printk(XENLOG_INFO "[DBG] XEN_DOMCTL_destroydomain.\n");
-/* TEST END */
         ret = domain_kill(d);
-        if ( ret == -ERESTART ) { printk(XENLOG_INFO "[DBG] -ERESTART ...\n");
+        if ( ret == -ERESTART )
             ret = hypercall_create_continuation(
-                __HYPERVISOR_domctl, "h", u_domctl); }
+                __HYPERVISOR_domctl, "h", u_domctl);
         break;
 
     case XEN_DOMCTL_setnodeaffinity:
