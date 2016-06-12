@@ -50,7 +50,8 @@ static bool_t p2m_mapping(lpae_t pte)
 
 void p2m_dump_info(struct domain *d)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct vcpu *v = current;
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
 
     spin_lock(&p2m->lock);
     printk("p2m mappings for domain %d (vmid %d):\n",
@@ -70,7 +71,8 @@ void memory_type_changed(struct domain *d)
 
 void dump_p2m_lookup(struct domain *d, paddr_t addr)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct vcpu *v = current;
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
 
     printk("dom%d IPA 0x%"PRIpaddr"\n", d->domain_id, addr);
 
@@ -85,6 +87,9 @@ static void p2m_load_altp2m_VTTBR(struct vcpu *v)
 {
     uint16_t altp2m_idx = vcpu_altp2m(v).p2midx;
     struct domain *d = v->domain;
+
+    if ( is_idle_domain(d) )
+        return;
 
     printk(XENLOG_INFO "[DBG] p2m_load_altp2m_VTTBR[%d]: vttbr=0x%llx\n",
             altp2m_idx, d->arch.altp2m_vttbr[altp2m_idx]);
@@ -205,6 +210,10 @@ static paddr_t __p2m_lookup(struct p2m_domain *p2m, paddr_t paddr, p2m_type_t *t
     p2m_type_t _t;
     unsigned int level, root_table;
 
+/* TEST */
+//    printk(XENLOG_INFO "[DBG] __p2m_lookup 1\n");
+/* TEST END */
+
     ASSERT(spin_is_locked(&p2m->lock));
     BUILD_BUG_ON(THIRD_MASK != PAGE_MASK);
 
@@ -228,7 +237,15 @@ static paddr_t __p2m_lookup(struct p2m_domain *p2m, paddr_t paddr, p2m_type_t *t
     else
         root_table = 0;
 
+/* TEST */
+//    printk(XENLOG_INFO "[DBG] __p2m_lookup 2\n");
+/* TEST END */
+
     map = __map_domain_page(p2m->root + root_table);
+
+/* TEST */
+//    printk(XENLOG_INFO "[DBG] __p2m_lookup 3\n");
+/* TEST END */
 
     ASSERT(P2M_ROOT_LEVEL < 4);
 
@@ -252,7 +269,15 @@ static paddr_t __p2m_lookup(struct p2m_domain *p2m, paddr_t paddr, p2m_type_t *t
         map = map_domain_page(_mfn(pte.p2m.base));
     }
 
+/* TEST */
+//    printk(XENLOG_INFO "[DBG] __p2m_lookup 4\n");
+/* TEST END */
+
     unmap_domain_page(map);
+
+/* TEST */
+//    printk(XENLOG_INFO "[DBG] __p2m_lookup 5\n");
+/* TEST END */
 
     if ( p2m_valid(pte) )
     {
@@ -262,6 +287,10 @@ static paddr_t __p2m_lookup(struct p2m_domain *p2m, paddr_t paddr, p2m_type_t *t
         *t = pte.p2m.type;
     }
 
+/* TEST */
+//    printk(XENLOG_INFO "[DBG] __p2m_lookup 6\n");
+/* TEST END */
+
 err:
     return maddr;
 }
@@ -270,12 +299,7 @@ paddr_t p2m_lookup(struct domain *d, paddr_t paddr, p2m_type_t *t)
 {
     paddr_t ret;
     struct vcpu *v = current;
-    struct p2m_domain *p2m = NULL;
-
-    if ( altp2m_active(d) )
-        p2m = p2m_get_altp2m(v);
-    else
-        p2m = p2m_get_hostp2m(d);
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
 
     spin_lock(&p2m->lock);
     ret = __p2m_lookup(p2m, paddr, t);
@@ -725,11 +749,19 @@ static int apply_one_level(struct domain *d,
     switch ( op )
     {
     case ALLOCATE:
+/* TEST */
+//        printk(XENLOG_INFO "[DBG] apply_one_level: 1\n");
+/* TEST END */
+
         ASSERT(level < 3 || !p2m_valid(orig_pte));
         ASSERT(*maddr == 0);
 
         if ( p2m_valid(orig_pte) )
             return P2M_ONE_DESCEND;
+
+/* TEST */
+//        printk(XENLOG_INFO "[DBG] apply_one_level: 2\n");
+/* TEST END */
 
         if ( is_mapping_aligned(*addr, end_gpaddr, 0, level_size) &&
            /* We only create superpages when mem_access is not in use. */
@@ -755,11 +787,19 @@ static int apply_one_level(struct domain *d,
 
                 *addr += level_size;
 
+/* TEST */
+//        printk(XENLOG_INFO "[DBG] apply_one_level: 2.5\n");
+/* TEST END */
+
                 return P2M_ONE_PROGRESS;
             }
             else if ( level == 3 )
                 return -ENOMEM;
         }
+
+/* TEST */
+        // printk(XENLOG_INFO "[DBG] apply_one_level: 3\n");
+/* TEST END */
 
         /* L3 is always suitably aligned for mapping (handled, above) */
         BUG_ON(level == 3);
@@ -774,6 +814,10 @@ static int apply_one_level(struct domain *d,
         if ( rc < 0 )
             return rc;
 
+/* TEST */
+//        printk(XENLOG_INFO "[DBG] apply_one_level: 4\n");
+/* TEST END */
+
         return P2M_ONE_DESCEND;
 
     case INSERT:
@@ -784,6 +828,9 @@ static int apply_one_level(struct domain *d,
             */
              (level == 3 || (!p2m_table(orig_pte) && !p2m->mem_access_enabled)) )
         {
+/* TEST */
+            //printk(XENLOG_INFO "[DBG] apply_one_level: INSERT (aligned).\n");
+/* TEST END */
             rc = p2m_mem_access_radix_set(p2m, paddr_to_pfn(*addr), a);
             if ( rc < 0 )
                 return rc;
@@ -793,6 +840,9 @@ static int apply_one_level(struct domain *d,
             if ( level < 3 )
                 pte.p2m.table = 0; /* Superpage entry */
 
+/* TEST */
+            //printk(XENLOG_INFO "[DBG] apply_one_level: INSERT p2m_write_pte.\n");
+/* TEST END */
             p2m_write_pte(entry, pte, flush_cache);
 
             *flush |= p2m_valid(orig_pte);
@@ -815,11 +865,17 @@ static int apply_one_level(struct domain *d,
             }
             else /* New mapping */
                 p2m->stats.mappings[level]++;
+/* TEST */
+            //printk(XENLOG_INFO "[DBG] apply_one_level: INSERT it's all good.\n");
+/* TEST END */
 
             return P2M_ONE_PROGRESS;
         }
         else
         {
+/* TEST */
+            // printk(XENLOG_INFO "[DBG] apply_one_level: INSERT (not aligned).\n");
+/* TEST END */
             /* New mapping is not superpage aligned, create a new table entry */
 
             /* L3 is always suitably aligned for mapping (handled, above) */
@@ -834,6 +890,10 @@ static int apply_one_level(struct domain *d,
                 return P2M_ONE_DESCEND;
             }
 
+/* TEST */
+            // printk(XENLOG_INFO "[DBG] apply_one_level: INSERT p2m_mapping(orig_pte).\n");
+/* TEST END */
+
             /* Existing superpage mapping -> shatter and descend */
             if ( p2m_mapping(orig_pte) )
             {
@@ -845,6 +905,9 @@ static int apply_one_level(struct domain *d,
 
             BUG_ON(!p2m_table(*entry));
 
+/* TEST */
+            // printk(XENLOG_INFO "[DBG] apply_one_level: INSERT it's all good.\n");
+/* TEST END */
             return P2M_ONE_DESCEND;
         }
 
@@ -1740,18 +1803,13 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag)
     xenmem_access_t xma;
     p2m_type_t t;
     struct page_info *page = NULL;
-    struct p2m_domain *p2m = NULL;
     struct vcpu *v = current;
     struct domain *d = v->domain;
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
 
     rc = gva_to_ipa(gva, &ipa, flag);
     if ( rc < 0 )
         goto err;
-
-    if ( altp2m_active(d) )
-        p2m = p2m_get_altp2m(v);
-    else
-        p2m = p2m_get_hostp2m(d);
 
     /*
      * We do this first as this is faster in the default case when no
@@ -1833,15 +1891,10 @@ struct page_info *get_page_from_gva(struct vcpu *v, vaddr_t va,
                                     unsigned long flags)
 {
     struct domain *d = v->domain;
-    struct p2m_domain *p2m = NULL;
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
     struct page_info *page = NULL;
     paddr_t maddr = 0;
     int rc;
-
-    if ( altp2m_active(d) )
-        p2m = p2m_get_altp2m(v);
-    else
-        p2m = p2m_get_hostp2m(d);
 
     spin_lock(&p2m->lock);
 
@@ -1858,7 +1911,7 @@ struct page_info *get_page_from_gva(struct vcpu *v, vaddr_t va,
 
         rc = gvirt_to_maddr(va, &maddr, flags);
 
-        if (  altp2m_active(current->domain) )
+        if ( altp2m_active(current->domain) )
             p2m_load_altp2m_VTTBR(current);
         else
             p2m_load_VTTBR(current->domain);
@@ -1971,12 +2024,7 @@ bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
     vm_event_request_t *req;
     struct vcpu *v = current;
     struct domain *d = v->domain;
-    struct p2m_domain *p2m = NULL;
-
-    if ( altp2m_active(d) )
-        p2m = p2m_get_altp2m(v);
-    if ( !p2m )
-        p2m = p2m_get_hostp2m(d);
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
 
     /* Mem_access is not in use. */
     if ( !p2m->mem_access_enabled )
@@ -2179,12 +2227,7 @@ int p2m_get_mem_access(struct domain *d, gfn_t gfn,
 {
     int ret;
     struct vcpu *v = current;
-    struct p2m_domain *p2m = NULL;
-
-    if ( altp2m_active(d) )
-        p2m = p2m_get_altp2m(v);
-    if ( !p2m )
-        p2m = p2m_get_hostp2m(d);
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
 
     spin_lock(&p2m->lock);
     ret = __p2m_get_mem_access(p2m, gfn, access);
@@ -2206,6 +2249,71 @@ struct p2m_domain *p2m_get_altp2m(struct vcpu *v)
 }
 
 /*
+ * TODO: Think about merging p2m_get_gfn_mapping_size with __p2m_lookup.
+ */
+static int p2m_get_gfn_mapping_size(struct p2m_domain *p2m,
+                                    paddr_t paddr, unsigned int *level)
+{
+    const unsigned int offsets[4] = {
+        zeroeth_table_offset(paddr),
+        first_table_offset(paddr),
+        second_table_offset(paddr),
+        third_table_offset(paddr)
+    };
+    lpae_t pte, *map;
+    unsigned int root_table;
+
+    ASSERT(spin_is_locked(&p2m->lock));
+    BUILD_BUG_ON(THIRD_MASK != PAGE_MASK);
+
+    if ( P2M_ROOT_PAGES > 1 )
+    {
+        /*
+         * Concatenated root-level tables. The table number will be
+         * the offset at the previous level. It is not possible to
+         * concatenate a level-0 root.
+         */
+        ASSERT(P2M_ROOT_LEVEL > 0);
+        root_table = offsets[P2M_ROOT_LEVEL - 1];
+        if ( root_table >= P2M_ROOT_PAGES )
+            goto err;
+    }
+    else
+        root_table = 0;
+
+    map = __map_domain_page(p2m->root + root_table);
+
+    ASSERT(P2M_ROOT_LEVEL < 4);
+
+    for ( *level = P2M_ROOT_LEVEL ; *level < 4 ; (*level)++ )
+    {
+        pte = map[offsets[*level]];
+
+        if ( *level == 3 || !p2m_table(pte) )
+            /* Done */
+            break;
+
+        ASSERT(*level < 3);
+
+        /* Map for next level */
+        unmap_domain_page(map);
+        map = map_domain_page(_mfn(pte.p2m.base));
+    }
+
+    unmap_domain_page(map);
+
+    if ( !p2m_valid(pte) )
+    {
+        goto err; 
+    }
+
+    return 0;
+
+err:
+    return -EINVAL;
+}
+
+/*
  * If the fault is for a not present entry:
  *     if the entry in the host p2m has a valid mfn, copy it and retry
  *     else indicate that outer handler should handle fault
@@ -2217,15 +2325,16 @@ bool_t p2m_altp2m_lazy_copy(struct vcpu *v, paddr_t gpa,
                             unsigned long gva, struct npfec npfec,
                             struct p2m_domain **ap2m)
 {
+    const paddr_t masks[4] = {
+        ZEROETH_MASK, FIRST_MASK, SECOND_MASK, THIRD_MASK
+    };
     struct domain *d = v->domain;
     struct p2m_domain *hp2m = p2m_get_hostp2m(v->domain);
     p2m_type_t p2mt;
     xenmem_access_t xma;
-    paddr_t maddr;
-//     unsigned int page_order;
+    paddr_t maddr, mask = 0;
     gfn_t gfn = _gfn(paddr_to_pfn(gpa));
-//     unsigned long mask;
-//     mfn_t mfn;
+    unsigned int level;
     int rc = 0;
 
     static const p2m_access_t memaccess[] = {
@@ -2244,64 +2353,76 @@ bool_t p2m_altp2m_lazy_copy(struct vcpu *v, paddr_t gpa,
     };
 
     *ap2m = p2m_get_altp2m(v);
+    if ( *ap2m == NULL)
+        return 0;
 
     /* Check if entry is part of the altp2m view */
-    maddr = __p2m_lookup(*ap2m, gpa, &p2mt);
+    spin_lock(&(*ap2m)->lock);
+    maddr = __p2m_lookup(*ap2m, gpa, NULL);
+    spin_unlock(&(*ap2m)->lock);
     if ( maddr != INVALID_PADDR )
         return 0;
 
     /* Check if entry is part of the host p2m view */
-    maddr = __p2m_lookup(hp2m, gpa, NULL);
+    spin_lock(&hp2m->lock);
+    maddr = __p2m_lookup(hp2m, gpa, &p2mt);
     if ( maddr == INVALID_PADDR )
+    {
+        spin_unlock(&hp2m->lock);
         return 0;
+    }
 
-   rc = __p2m_get_mem_access(hp2m, gfn, &xma);
+    rc = __p2m_get_mem_access(hp2m, gfn, &xma);
+    if ( rc )
+    {
+        spin_unlock(&hp2m->lock);
+        return 0;
+    }
 
-    spin_lock(&(*ap2m)->lock);
+    rc = p2m_get_gfn_mapping_size(hp2m, gpa, &level);
+    if ( rc )
+    {
+        spin_unlock(&hp2m->lock);
+        return 0;
+    }
+    spin_unlock(&hp2m->lock);
 
-    rc = apply_p2m_changes(d, *ap2m, ALLOCATE,
-                           pfn_to_paddr(gfn_x(gfn)),
-                           pfn_to_paddr(gfn_x(gfn) + 1),
-                           0, MATTR_MEM, 0, p2mt,
+    mask = masks[level];
+
+/* TEST */
+#if 0
+    printk(XENLOG_INFO "[DBG] level=%d\n", level);
+    printk(XENLOG_INFO "[DBG] start_addr=%lx end_addr=%lx maddr=%lx\n",
+                (unsigned long)(pfn_to_paddr(gfn_x(gfn)) & mask),
+                (unsigned long)((pfn_to_paddr(gfn_x(gfn)) + level_sizes[level]) & mask),
+                (unsigned long)(maddr & mask));
+#endif
+/* TEST END */
+
+    rc = apply_p2m_changes(d, *ap2m, INSERT,
+                           pfn_to_paddr(gfn_x(gfn)) & mask,
+                           (pfn_to_paddr(gfn_x(gfn)) + level_sizes[level]) & mask,
+                           maddr & mask, MATTR_MEM, 0, p2mt,
                            memaccess[xma]);
 
-    spin_unlock(&(*ap2m)->lock);
 
+/* TEST */
+#if 0
+    printk(XENLOG_INFO "[--- P2M Lookup altp2m[%d]]\n", vcpu_altp2m(v).p2midx);
+    dump_p2m_lookup(d, gpa);
+    printk(XENLOG_INFO "[--- P2M Lookup hostp2m]\n");
+    dump_pt_walk(page_to_maddr(hp2m->root), gpa,
+                 P2M_ROOT_LEVEL, P2M_ROOT_PAGES);
+#endif
+/* TEST END */
 
-//     mfn = get_gfn_type_access(*ap2m, gfn_x(gfn), &p2mt, &p2ma,
-//                               0, &page_order);
-//     __put_gfn(*ap2m, gfn_x(gfn));
-//
-//     if ( mfn_x(mfn) != INVALID_MFN )
-//         return 0;
-//
-//     mfn = get_gfn_type_access(hp2m, gfn_x(gfn), &p2mt, &p2ma,
-//                               P2M_ALLOC | P2M_UNSHARE, &page_order);
-//     __put_gfn(hp2m, gfn_x(gfn));
-//
-//     if ( mfn_x(mfn) == INVALID_MFN )
-//         return 0;
-//
-//     p2m_lock(*ap2m);
-//
-//     /*
-//      * If this is a superpage mapping, round down both frame numbers
-//      * to the start of the superpage.
-//      */
-//     mask = ~((1UL << page_order) - 1);
-//     mfn = _mfn(mfn_x(mfn) & mask);
-//
-//     rv = p2m_set_entry(*ap2m, gfn_x(gfn) & mask, mfn, page_order, p2mt, p2ma);
-//     p2m_unlock(*ap2m);
-//
-//     if ( rv )
-//     {
-//         gdprintk(XENLOG_ERR,
-//             "failed to set entry for %#"PRIx64" -> %#"PRIx64" p2m %#"PRIx64"\n",
-//             gfn_x(gfn), mfn_x(mfn), (unsigned long)*ap2m);
-//         domain_crash(hp2m->domain);
-//     }
-//
+    if ( rc )
+    {
+        gdprintk(XENLOG_ERR, "failed to set entry for %lx -> %lx p2m %lx\n",
+                (unsigned long)pfn_to_paddr(gfn_x(gfn)), (unsigned long)(maddr), (unsigned long)*ap2m);
+        domain_crash(hp2m->domain);
+    }
+
     return 1;
 }
 

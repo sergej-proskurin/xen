@@ -150,6 +150,7 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
 
     /* TODO: implement following cases. */
     case HVMOP_altp2m_vcpu_enable_notify:
+        rc = -EOPNOTSUPP;
         break;
 
     case HVMOP_altp2m_create_p2m:
@@ -158,6 +159,7 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
         break;
 
     case HVMOP_altp2m_destroy_p2m:
+        rc = -EOPNOTSUPP;
         break;
 
     case HVMOP_altp2m_switch_p2m:
@@ -175,6 +177,7 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
         break;
 
     case HVMOP_altp2m_change_gfn:
+        rc = -EOPNOTSUPP;
         break;
     }
 

@@ -2411,30 +2411,25 @@ static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
     switch ( hsr.iabt.ifsc & 0x3f )
     {
     case FSC_FLT_TRANS ... FSC_FLT_TRANS + 3:
-
         if ( altp2m_active(d) )
         {
             const struct npfec npfec = {
                 .insn_fetch = 1,
-                .gla_valid = 0,
+                .gla_valid = 1, // 0,
                 .kind = hsr.iabt.s1ptw ? npfec_kind_in_gpt : npfec_kind_with_gla
             };
-
 /* TEST */
-            gdprintk(XENLOG_DEBUG, "do_trap_instr_abort_guest: HSR=0x%x\n", hsr.bits);
+            gdprintk(XENLOG_DEBUG, "[DBG] instr_abort (altp2m[%d]): \n"
+                    " [+] ipa=0x%llx (gva=0x%x) \n"
+                    " [+] SR=0x%x pc=%#"PRIregister".\n",
+                    vcpu_altp2m(v).p2midx, gpa, gva, hsr.bits, regs->pc);
 /* TEST END */
 
             if ( p2m_altp2m_lazy_copy(v, gpa, gva, npfec, &p2m) )
-            {
-                /* entry was lazily copied from host -- retry */
-/* TEST */
-                gdprintk(XENLOG_DEBUG, "do_trap_instr_abort_guest: lazy copied stuff...\n");
-/* TEST END */
-            }
-
-            rc = p2m_mem_access_check(gpa, gva, npfec);
-            if ( !rc )
                 return;
+
+            gdprintk(XENLOG_WARNING, "Failed resolving altp2m 2nd stage page fault.\n");
+            domain_crash(d);    
         }
 
         break;
@@ -2455,7 +2450,7 @@ static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
     break;
     }
 /* TEST */
-    gdprintk(XENLOG_DEBUG, "do_trap_instr_abort_guest: HSR=0x%x eof\n", hsr.bits);
+    gdprintk(XENLOG_DEBUG, "[DBG] do_trap_instr_abort_guest: HSR=0x%x eof\n", hsr.bits);
 /* TEST END */
 
 bad_insn_abort:
@@ -2485,6 +2480,11 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
     info.gva = READ_SYSREG64(FAR_EL2);
 #endif
 
+/* TEST */
+//    gdprintk(XENLOG_DEBUG, "[DBG] do_trap_data_abort_guest: HSR=0x%x pc=%#"PRIregister" gva=%#"PRIvaddr
+//             " gpa=%#"PRIpaddr"\n", hsr.bits, regs->pc, info.gva, info.gpa);
+/* TEST END */
+
     if ( dabt.s1ptw )
         info.gpa = get_faulting_ipa();
     else
@@ -2496,6 +2496,18 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
 
     switch ( dabt.dfsc & 0x3f )
     {
+    case FSC_FLT_TRANS ... FSC_FLT_TRANS + 3:
+    {
+        if ( altp2m_active(current->domain) )
+        {
+/* TEST */
+        printk(XENLOG_INFO "[DBG] data_abort: HSR=0x%x stage 2 translation fault!\n",
+                hsr.bits);
+/* TEST END */
+        }
+
+        break;
+    }
     case FSC_FLT_PERM ... FSC_FLT_PERM + 3:
     {
         const struct npfec npfec = {
@@ -2510,19 +2522,13 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
         /* Trap was triggered by mem_access, work here is done */
         if ( !rc )
             return;
-/* TEST */
-//        printk(XENLOG_INFO "[DBG] do_trap_data_abort_guest: dabt=0x%x \n", hsr.bits);
-/* TEST END */
 
+        break;
     }
     break;
     }
 
     if ( dabt.s1ptw ) {
-/* TEST */
-//        printk(XENLOG_INFO "[DBG] do_trap_data_abort_guest: HSR=0x%x stage 2 translation fault!\n", hsr.bits);
-/* TEST END */
-
         goto bad_data_abort;
     }
 
