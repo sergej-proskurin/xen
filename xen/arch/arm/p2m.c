@@ -91,8 +91,10 @@ static void p2m_load_altp2m_VTTBR(struct vcpu *v)
     if ( is_idle_domain(d) )
         return;
 
-    printk(XENLOG_INFO "[DBG] p2m_load_altp2m_VTTBR[%d]: vttbr=0x%llx\n",
-            altp2m_idx, d->arch.altp2m_vttbr[altp2m_idx]);
+/* TEST */
+//    printk(XENLOG_INFO "[DBG] p2m_load_altp2m_VTTBR[%d]: vttbr=0x%llx\n",
+//            altp2m_idx, d->arch.altp2m_vttbr[altp2m_idx]);
+/* TEST END */
 
     BUG_ON(!d->arch.altp2m_vttbr[altp2m_idx]);
     WRITE_SYSREG64(d->arch.altp2m_vttbr[altp2m_idx], VTTBR_EL2);
@@ -2252,7 +2254,8 @@ struct p2m_domain *p2m_get_altp2m(struct vcpu *v)
  * TODO: Think about merging p2m_get_gfn_mapping_size with __p2m_lookup.
  */
 static int p2m_get_gfn_mapping_size(struct p2m_domain *p2m,
-                                    paddr_t paddr, unsigned int *level)
+                                    paddr_t paddr, unsigned int *level,
+                                    unsigned long *mattr)
 {
     const unsigned int offsets[4] = {
         zeroeth_table_offset(paddr),
@@ -2285,6 +2288,7 @@ static int p2m_get_gfn_mapping_size(struct p2m_domain *p2m,
 
     ASSERT(P2M_ROOT_LEVEL < 4);
 
+    /* Find the p2m level of the wanted paddr */
     for ( *level = P2M_ROOT_LEVEL ; *level < 4 ; (*level)++ )
     {
         pte = map[offsets[*level]];
@@ -2303,9 +2307,10 @@ static int p2m_get_gfn_mapping_size(struct p2m_domain *p2m,
     unmap_domain_page(map);
 
     if ( !p2m_valid(pte) )
-    {
         goto err; 
-    }
+
+    /* Provide mattr information of the paddr */
+    *mattr = pte.p2m.mattr;
 
     return 0;
 
@@ -2335,6 +2340,7 @@ bool_t p2m_altp2m_lazy_copy(struct vcpu *v, paddr_t gpa,
     paddr_t maddr, mask = 0;
     gfn_t gfn = _gfn(paddr_to_pfn(gpa));
     unsigned int level;
+    unsigned long mattr;
     int rc = 0;
 
     static const p2m_access_t memaccess[] = {
@@ -2361,13 +2367,29 @@ bool_t p2m_altp2m_lazy_copy(struct vcpu *v, paddr_t gpa,
     maddr = __p2m_lookup(*ap2m, gpa, NULL);
     spin_unlock(&(*ap2m)->lock);
     if ( maddr != INVALID_PADDR )
+    {
+        gdprintk(XENLOG_DEBUG, "Failed to perform altp2m table lookup.\n");
         return 0;
+    }
 
     /* Check if entry is part of the host p2m view */
     spin_lock(&hp2m->lock);
     maddr = __p2m_lookup(hp2m, gpa, &p2mt);
     if ( maddr == INVALID_PADDR )
     {
+/* TEST */
+#if 0
+        gdprintk(XENLOG_DEBUG, "Failed to perform hostp2m table lookup.\n");
+        gdprintk(XENLOG_DEBUG, "----------------\n");
+        printk(XENLOG_INFO "[--- P2M Lookup altp2m[%d]]\n", vcpu_altp2m(v).p2midx);
+        dump_p2m_lookup(d, gpa);
+        printk(XENLOG_INFO "[--- P2M Lookup hostp2m]\n");
+        dump_pt_walk(page_to_maddr(hp2m->root), gpa,
+                     P2M_ROOT_LEVEL, P2M_ROOT_PAGES);
+        gdprintk(XENLOG_DEBUG, "----------------\n");
+#endif
+/* TEST END */
+
         spin_unlock(&hp2m->lock);
         return 0;
     }
@@ -2375,11 +2397,12 @@ bool_t p2m_altp2m_lazy_copy(struct vcpu *v, paddr_t gpa,
     rc = __p2m_get_mem_access(hp2m, gfn, &xma);
     if ( rc )
     {
+        gdprintk(XENLOG_DEBUG, "Failed to get mem access.\n");
         spin_unlock(&hp2m->lock);
         return 0;
     }
 
-    rc = p2m_get_gfn_mapping_size(hp2m, gpa, &level);
+    rc = p2m_get_gfn_mapping_size(hp2m, gpa, &level, &mattr);
     if ( rc )
     {
         spin_unlock(&hp2m->lock);
@@ -2402,7 +2425,7 @@ bool_t p2m_altp2m_lazy_copy(struct vcpu *v, paddr_t gpa,
     rc = apply_p2m_changes(d, *ap2m, INSERT,
                            pfn_to_paddr(gfn_x(gfn)) & mask,
                            (pfn_to_paddr(gfn_x(gfn)) + level_sizes[level]) & mask,
-                           maddr & mask, MATTR_MEM, 0, p2mt,
+                           maddr & mask, mattr, 0, p2mt,
                            memaccess[xma]);
 
 
