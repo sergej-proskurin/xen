@@ -2411,6 +2411,7 @@ static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
     switch ( hsr.iabt.ifsc & 0x3f )
     {
     case FSC_FLT_TRANS ... FSC_FLT_TRANS + 3:
+    {
         if ( altp2m_active(d) )
         {
             const struct npfec npfec = {
@@ -2419,16 +2420,19 @@ static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
                 .kind = hsr.iabt.s1ptw ? npfec_kind_in_gpt : npfec_kind_with_gla
             };
 /* TEST */
+#if 0
             gdprintk(XENLOG_DEBUG, "[DBG] instr_abort (altp2m[%d]): \n"
                     " [+] ipa=0x%llx (gva=0x%x) \n"
                     " [+] SR=0x%x pc=%#"PRIregister".\n",
                     vcpu_altp2m(v).p2midx, gpa, gva, hsr.bits, regs->pc);
+#endif
 /* TEST END */
 
             if ( p2m_altp2m_lazy_copy(v, gpa, gva, npfec, &p2m) )
                 return;
-
+/* TEST */
             gdprintk(XENLOG_WARNING, "Failed resolving altp2m 2nd stage page fault.\n");
+/* TEST END */
 
             rc = p2m_mem_access_check(gpa, gva, npfec);
             /* Trap was triggered by mem_access, work here is done */
@@ -2439,6 +2443,7 @@ static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
         }
 
         break;
+    }
     case FSC_FLT_PERM ... FSC_FLT_PERM + 3:
     {
         const struct npfec npfec = {
@@ -2457,9 +2462,6 @@ static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
     }
 
 bad_insn_abort:
-/* TEST */
-    gdprintk(XENLOG_DEBUG, "[DBG] instr_abort: inject_iabt_exception\n");
-/* TEST END */
     inject_iabt_exception(regs, gva, hsr.len);
 }
 
@@ -2509,16 +2511,20 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
             };
 
 /* TEST */
+#if 0
             gdprintk(XENLOG_DEBUG, "[DBG] data_abort (altp2m[%d]): \n"
                     " [+] HSR=0x%x pc=%#"PRIregister"\n"
                     " [+] gva=%#"PRIvaddr" gpa=%#"PRIpaddr"\n",
                     vcpu_altp2m(v).p2midx, hsr.bits, regs->pc, info.gva, info.gpa);
+#endif
 /* TEST END */
             
             if ( p2m_altp2m_lazy_copy(v, info.gpa, info.gva, npfec, &p2m) )
                 return;
 
+/* TEST */
             gdprintk(XENLOG_WARNING, "Failed resolving altp2m 2nd stage page fault.\n");
+/* TEST END */
 
             rc = p2m_mem_access_check(info.gpa, info.gva, npfec);
 
