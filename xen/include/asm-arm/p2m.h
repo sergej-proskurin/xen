@@ -133,11 +133,7 @@ void p2m_altp2m_check(struct vcpu *v, uint16_t idx)
 }
 
 /* Flush all the alternate p2m's for a domain */
-static inline
-void p2m_flush_altp2m(struct domain *d)
-{
-    /* Not yet supported on ARM. */
-}
+void p2m_flush_altp2m(struct domain *d);
 
 /* Alternate p2m paging */
 bool_t p2m_altp2m_lazy_copy(struct vcpu *v, paddr_t gpa,
@@ -148,6 +144,9 @@ int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx);
 
 /* Find an available alternate p2m and make it valid */
 int p2m_init_next_altp2m(struct domain *d, uint16_t *idx);
+
+/* Make a specific alternate p2m invalid */
+int p2m_destroy_altp2m_by_id(struct domain *d, unsigned int idx);
 
 /* Switch alternate p2m for entire domain */
 int p2m_switch_domain_altp2m_by_id(struct domain *d, unsigned int idx);
@@ -302,6 +301,16 @@ static inline int get_page_and_type(struct page_info *page,
 
 /* get host p2m table */
 #define p2m_get_hostp2m(d) (&(d)->arch.p2m)
+
+static inline bool_t p2m_is_hostp2m(const struct p2m_domain *p2m)
+{
+    return p2m->p2m_class == p2m_host;
+}
+
+static inline bool_t p2m_is_altp2m(const struct p2m_domain *p2m)
+{
+    return p2m->p2m_class == p2m_alternate;
+}
 
 /* vm_event and mem_access are supported on any ARM guest */
 static inline bool_t p2m_mem_access_sanity_check(struct domain *d)

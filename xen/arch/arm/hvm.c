@@ -118,13 +118,16 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
         struct vcpu *v;
         bool_t ostate;
 
-        /* TODO: No nestedhvm support on ARM (yet ?) */
-        if ( !d->arch.hvm_domain.params[HVM_PARAM_ALTP2M] ) // ||
-//             nestedhvm_enabled(d) )
+        if ( !d->arch.hvm_domain.params[HVM_PARAM_ALTP2M] )
         {
             rc = -EINVAL;
             break;
         }
+
+/* TEST */
+        printk(XENLOG_INFO "[DBG] HVMOP_altp2m_set_domain_state: ostate=%d vs nstate=%d\n",
+                d->arch.altp2m_active, a.u.domain_state.state);
+/* TEST END */
 
         ostate = d->arch.altp2m_active;
         d->arch.altp2m_active = !!a.u.domain_state.state;
@@ -159,7 +162,7 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
         break;
 
     case HVMOP_altp2m_destroy_p2m:
-        rc = -EOPNOTSUPP;
+        rc = p2m_destroy_altp2m_by_id(d, a.u.view.view);
         break;
 
     case HVMOP_altp2m_switch_p2m:

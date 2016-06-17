@@ -91,6 +91,11 @@ static void p2m_load_altp2m_VTTBR(struct vcpu *v)
     if ( is_idle_domain(d) )
         return;
 
+/* TEST */
+//     printk(XENLOG_INFO "[DBG] p2m_load_altp2m_VTTBR[%d]: vttbr=0x%llx\n",
+//            altp2m_idx, d->arch.altp2m_vttbr[altp2m_idx]);
+/* TEST END */
+
     BUG_ON(!d->arch.altp2m_vttbr[altp2m_idx]);
     WRITE_SYSREG64(d->arch.altp2m_vttbr[altp2m_idx], VTTBR_EL2);
 
@@ -1515,6 +1520,8 @@ static int p2m_initialise(struct domain *d, struct p2m_domain *p2m)
 
 static void p2m_free_one(struct p2m_domain *p2m)
 {
+    mfn_t mfn;
+    unsigned int i;
     struct page_info *pg;
 
     /* TODO: Do we need dirty_cpumask? */
@@ -1523,11 +1530,20 @@ static void p2m_free_one(struct p2m_domain *p2m)
     spin_lock(&p2m->lock);
 
     while ( (pg = page_list_remove_head(&p2m->pages)) )
-        free_domheap_page(pg);
+        if ( pg != p2m->root )
+            free_domheap_page(pg);
 
+    /* Check whether p2m has already been freed before - preventing segfaults. */
+//    if ( p2m->root )
+//    {
+    for ( i = 0; i < P2M_ROOT_PAGES; i++ )
+    {
+        mfn = _mfn(page_to_mfn(p2m->root) + i);
+        clear_domain_page(mfn);
+    }
     free_domheap_pages(p2m->root, P2M_ROOT_ORDER);
-
     p2m->root = NULL;
+//    }
 
     radix_tree_destroy(&p2m->mem_access_settings, NULL);
 
@@ -1555,16 +1571,31 @@ free_p2m:
 
 static void p2m_teardown_hostp2m(struct domain *d)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
     struct page_info *pg = NULL;
+    mfn_t mfn;
+    unsigned int i;
+
+/* TEST */
+    printk(XENLOG_INFO "[DBG] p2m_teardown_hostp2m.\n");
+/* TEST END */
 
     spin_lock(&p2m->lock);
 
     while ( (pg = page_list_remove_head(&p2m->pages)) )
-        free_domheap_page(pg);
+        if ( pg != p2m->root )
+        {
+            mfn = _mfn(page_to_mfn(pg));
+            clear_domain_page(mfn);
+            free_domheap_page(pg);
+        }
 
+    for ( i = 0; i < P2M_ROOT_PAGES; i++ )
+    {
+        mfn = _mfn(page_to_mfn(p2m->root) + i);
+        clear_domain_page(mfn);
+    }
     free_domheap_pages(p2m->root, P2M_ROOT_ORDER);
-
     p2m->root = NULL;
 
     p2m_free_vmid(d);
@@ -1618,11 +1649,15 @@ static void p2m_teardown_altp2m(struct domain *d)
         if ( !d->arch.altp2m_p2m[i] )
             continue;
 
+/* TEST */
+        printk(XENLOG_INFO "[DBG] p2m_teardown_altp2m[%d]\n", i);
+/* TEST END */
+
         p2m = d->arch.altp2m_p2m[i];
-        d->arch.altp2m_p2m[i] = NULL;
         p2m_free_one(p2m);
         /* TODO: Think about moving altp2m_vttbr into p2m_domain. */
         d->arch.altp2m_vttbr[i] = INVALID_MFN;
+        d->arch.altp2m_p2m[i] = NULL;
     }
 
     d->arch.altp2m_active = false;
@@ -2228,7 +2263,7 @@ static int p2m_get_gfn_mapping_size(struct p2m_domain *p2m,
     unmap_domain_page(map);
 
     if ( !p2m_valid(pte) )
-        goto err; 
+        goto err;
 
     /* Provide mattr information of the paddr */
     *mattr = pte.p2m.mattr;
@@ -2423,6 +2458,113 @@ int p2m_init_next_altp2m(struct domain *d, uint16_t *idx)
     return rc;
 }
 
+/* Reset this p2m table to be empty */
+static void p2m_flush_table(struct p2m_domain *p2m)
+{
+    struct page_info *top, *pg;
+    mfn_t mfn;
+
+/* TEST */
+    printk(XENLOG_INFO "[DBG] p2m_flush_table.\n");
+/* TEST END */
+
+    /* Check whether the p2m table has already been flushed before. */
+    if ( p2m->root == NULL)
+        return;
+
+    spin_lock(&p2m->lock);
+
+    /*
+     * "Host" p2m tables can have shared entries &c that need a bit more care
+     * when discarding them
+     */
+    ASSERT(!p2m_is_hostp2m(p2m));
+
+    /* TODO: currently clearing only one page. Consider concatenated root
+     * pages. */
+
+    /* Zap the top level of the trie */
+    top = p2m->root;
+    mfn = _mfn(page_to_mfn(top));
+    clear_domain_page(mfn);
+
+    /* Free the rest of the trie pages back to the paging pool */
+    while ( (pg = page_list_remove_head(&p2m->pages)) )
+        if ( pg != top )
+        {
+            /*
+             * Before freeing the individual pages, we clear them to prevent
+             * reusing old table entries in future p2m allocations.
+             */
+            mfn = _mfn(page_to_mfn(pg));
+            clear_domain_page(mfn);
+            free_domheap_page(pg);
+        }
+
+    page_list_add(top, &p2m->pages);
+
+    /* Invalidate VTTBR */
+    p2m->vttbr.vttbr = 0;
+    p2m->vttbr.vttbr_baddr = INVALID_MFN;
+
+    spin_unlock(&p2m->lock);
+}
+
+void p2m_flush_altp2m(struct domain *d)
+{
+    unsigned int i;
+
+    altp2m_lock(d);
+
+    for ( i = 0; i < MAX_ALTP2M; i++ )
+    {
+/* TEST */
+        printk(XENLOG_INFO "[DBG] p2m_flush_altp2m[%d]\n", i);
+/* TEST */
+        p2m_flush_table(d->arch.altp2m_p2m[i]);
+        flush_tlb();
+        d->arch.altp2m_vttbr[i] = INVALID_MFN;
+    }
+
+    altp2m_unlock(d);
+}
+
+int p2m_destroy_altp2m_by_id(struct domain *d, unsigned int idx)
+{
+    struct p2m_domain *p2m;
+    int rc = -EBUSY;
+
+    if ( !idx || idx >= MAX_ALTP2M )
+        return rc;
+
+    domain_pause_except_self(d);
+
+/* TEST */
+    printk(XENLOG_INFO "[DBG] p2m_destroy_domain_altp2m_by_id: idx=%d\n", idx);
+/* TEST */
+
+    altp2m_lock(d);
+
+    if ( d->arch.altp2m_vttbr[idx] != INVALID_MFN )
+    {
+        p2m = d->arch.altp2m_p2m[idx];
+
+        if ( !_atomic_read(p2m->active_vcpus) )
+        {
+            p2m_flush_table(p2m);
+            flush_tlb();
+            d->arch.altp2m_vttbr[idx] = INVALID_MFN;
+            rc = 0;
+        }
+    }
+
+    altp2m_unlock(d);
+
+    domain_unpause_except_self(d);
+
+    return rc;
+}
+
 int p2m_switch_domain_altp2m_by_id(struct domain *d, unsigned int idx)
 {
     struct vcpu *v;
@@ -2430,6 +2572,10 @@ int p2m_switch_domain_altp2m_by_id(struct domain *d, unsigned int idx)
 
     if ( idx >= MAX_ALTP2M )
         return rc;
+
+/* TEST */
+    printk(XENLOG_INFO "[DBG] p2m_switch_domain_altp2m_by_id: idx=%d\n", idx);
+/* TEST */
 
     domain_pause_except_self(d);
 
