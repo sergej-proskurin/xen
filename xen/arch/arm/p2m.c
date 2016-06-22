@@ -15,6 +15,7 @@
 #include <asm/hardirq.h>
 #include <asm/page.h>
 
+#include <asm/vm_event.h>
 #include <asm/altp2m.h>
 
 #ifdef CONFIG_ARM_64
@@ -1974,6 +1975,12 @@ void __init setup_virt_paging(void)
     smp_call_function(setup_virt_paging_one, (void *)val, 1);
 }
 
+void p2m_altp2m_check(struct vcpu *v, uint16_t idx)
+{
+    if ( altp2m_active(v->domain) )
+        p2m_switch_vcpu_altp2m_by_id(v, idx);
+}
+
 bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
 {
     int rc;
@@ -2093,6 +2100,14 @@ bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
         req->u.mem_access.flags |= npfec.write_access   ? MEM_ACCESS_W : 0;
         req->u.mem_access.flags |= npfec.insn_fetch     ? MEM_ACCESS_X : 0;
         req->vcpu_id = v->vcpu_id;
+
+        vm_event_fill_regs(req);
+
+        if ( altp2m_active(v->domain) )
+        {
+            req->flags |= VM_EVENT_FLAG_ALTERNATE_P2M;
+            req->altp2m_idx = vcpu_altp2m(v).p2midx;
+        }
 
         mem_access_send_req(v->domain, req);
         xfree(req);
@@ -2272,6 +2287,32 @@ static int p2m_get_gfn_mapping_size(struct p2m_domain *p2m,
 
 err:
     return -EINVAL;
+}
+
+bool_t p2m_switch_vcpu_altp2m_by_id(struct vcpu *v, unsigned int idx)
+{
+    struct domain *d = v->domain;
+    bool_t rc = 0;
+
+    if ( idx >= MAX_ALTP2M )
+        return rc;
+
+    altp2m_lock(d);
+
+    if ( d->arch.altp2m_vttbr[idx] != INVALID_MFN )
+    {
+        if ( idx != vcpu_altp2m(v).p2midx )
+        {
+            atomic_dec(&p2m_get_altp2m(v)->active_vcpus);
+            vcpu_altp2m(v).p2midx = idx;
+            atomic_inc(&p2m_get_altp2m(v)->active_vcpus);
+        }
+        rc = 1;
+    }
+
+    altp2m_unlock(d);
+
+    return rc;
 }
 
 /*
@@ -2601,6 +2642,171 @@ int p2m_switch_domain_altp2m_by_id(struct domain *d, unsigned int idx)
     return rc;
 }
 
+int p2m_change_altp2m_gfn(struct domain *d, unsigned int idx,
+                          gfn_t old_gfn, gfn_t new_gfn)
+{
+    paddr_t old_gpa = pfn_to_paddr(gfn_x(old_gfn));
+    paddr_t new_gpa = pfn_to_paddr(gfn_x(new_gfn));
+    struct p2m_domain *hp2m, *ap2m;
+    xenmem_access_t xma;
+    p2m_type_t t;
+    paddr_t maddr, mask;
+    unsigned int level;
+    unsigned long mattr;
+    int rc = -EINVAL;
+
+    static const p2m_access_t memaccess[] = {
+#define ACCESS(ac) [XENMEM_access_##ac] = p2m_access_##ac
+        ACCESS(n),
+        ACCESS(r),
+        ACCESS(w),
+        ACCESS(rw),
+        ACCESS(x),
+        ACCESS(rx),
+        ACCESS(wx),
+        ACCESS(rwx),
+        ACCESS(rx2rw),
+        ACCESS(n2rwx),
+#undef ACCESS
+    };
+
+    if ( idx >= MAX_ALTP2M || d->arch.altp2m_vttbr[idx] == INVALID_MFN )
+        return rc;
+
+    hp2m = p2m_get_hostp2m(d);
+    ap2m = d->arch.altp2m_p2m[idx];
+
+    spin_lock(&ap2m->lock);
+    maddr = __p2m_lookup(ap2m, old_gpa, &t);
+    spin_unlock(&ap2m->lock);
+
+    /* Check whether the page needs to be reset */
+    if ( gfn_x(new_gfn) == INVALID_GFN )
+    {
+        if ( maddr != INVALID_PADDR )
+        {
+            /* Get mapped level and memory attr of the mapped old_gpa */ 
+            spin_lock(&ap2m->lock);
+            rc = p2m_get_gfn_mapping_size(ap2m, old_gpa, &level, &mattr);
+            if ( rc )
+            {
+                spin_unlock(&ap2m->lock);
+                return -EINVAL;
+            }
+            spin_unlock(&ap2m->lock);
+
+            mask = level_masks[level];
+            
+            /* Remove the mapped page from altp2m tables - maddr still contains
+             * the physical address of the mapped old_gpa */
+            rc = apply_p2m_changes(d, ap2m, REMOVE,
+                                   gfn_x(old_gfn) & mask,
+                                   (gfn_x(old_gfn) + level_sizes[level]) & mask,
+                                   maddr & mask, mattr, 0, p2m_invalid, t);
+            if ( rc )
+                return -EINVAL;
+        }
+
+        return 0;
+    }
+
+    /* Check host p2m if no valid entry in altp2m */
+    if ( maddr == INVALID_PADDR )
+    {
+        spin_lock(&hp2m->lock);
+        maddr = __p2m_lookup(hp2m, old_gpa, &t);
+
+        if ( (maddr == INVALID_PADDR) || (t != p2m_ram_rw) )
+        {
+            spin_unlock(&hp2m->lock);
+            return -EINVAL;
+        }
+
+        /* Get map-level and mem-attr of the mapped old_gpa */ 
+        rc = p2m_get_gfn_mapping_size(hp2m, old_gpa, &level, &mattr);
+        if ( rc )
+        {
+            spin_unlock(&hp2m->lock);
+            return -EINVAL;
+        }
+
+        /* Get memory access attributes of the mapped gfn */
+        rc = __p2m_get_mem_access(hp2m, old_gfn, &xma);
+        if ( rc )
+        {
+            spin_unlock(&hp2m->lock);
+            return 0;
+        }
+        spin_unlock(&hp2m->lock);
+
+        /* If this is a superpage, copy that first */
+        if ( level != 3 ) /* TODO: no third level define found */ 
+        {
+            mask = level_masks[level];
+            rc = apply_p2m_changes(d, ap2m, INSERT,
+                                   gfn_x(old_gfn) & mask,
+                                   (gfn_x(old_gfn) + level_sizes[level]) & mask,
+                                   maddr & mask, mattr, 0, t,
+                                   memaccess[xma]);
+            if ( rc )
+                return -EINVAL;
+        }
+    }
+
+    spin_lock(&ap2m->lock);
+    maddr = __p2m_lookup(ap2m, new_gpa, &t);
+
+    rc = p2m_get_gfn_mapping_size(ap2m, new_gpa, &level, &mattr);
+    if ( rc )
+    {
+        spin_unlock(&ap2m->lock);
+        return -EINVAL;
+    }
+
+    rc = __p2m_get_mem_access(ap2m, new_gfn, &xma);
+    if ( rc )
+    {
+        spin_unlock(&ap2m->lock);
+        return -EINVAL;
+    }
+    spin_unlock(&ap2m->lock);
+
+    /* If new_gpa is not part of altp2m, get the mapping information from hp2m */
+    if ( maddr == INVALID_PADDR )
+    {
+        spin_lock(&hp2m->lock);
+        maddr = __p2m_lookup(hp2m, new_gpa, &t);
+
+        rc = p2m_get_gfn_mapping_size(hp2m, new_gpa, &level, &mattr);
+        if ( rc )
+        {
+            spin_unlock(&hp2m->lock);
+            return -EINVAL;
+        }
+
+        rc = __p2m_get_mem_access(hp2m, new_gfn, &xma);
+        if ( rc )
+        {
+            spin_unlock(&hp2m->lock);
+            return -EINVAL;
+        }
+        spin_unlock(&hp2m->lock);
+    }
+
+    if ( (maddr == INVALID_PADDR) || (t != p2m_ram_rw) )
+        return -EINVAL;
+
+    mask = level_masks[level];
+    rc = apply_p2m_changes(d, ap2m, INSERT,
+                           gfn_x(old_gfn) & mask,
+                           (gfn_x(old_gfn) + level_sizes[level]) & mask,
+                           maddr & mask, mattr, 0, t,
+                           memaccess[xma]);
+    if ( rc )
+        return -EINVAL;
+    
+    return 0;
+}
 
 /*
  * Local variables:

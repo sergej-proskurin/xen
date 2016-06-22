@@ -32,9 +32,7 @@ altp2m_active(const struct domain *d)
 static inline uint16_t
 altp2m_vcpu_idx(const struct vcpu *v)
 {
-    /* Not implemented on ARM, should not be reached. */
-    BUG();
-    return 0;
+    return vcpu_altp2m(v).p2midx;
 }
 
 /* Alternate p2m VCPU */

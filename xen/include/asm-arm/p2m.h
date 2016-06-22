@@ -125,12 +125,11 @@ void p2m_mem_access_emulate_check(struct vcpu *v,
 /* Get current alternate p2m table */
 struct p2m_domain *p2m_get_altp2m(struct vcpu *v);
 
+/* Switch alternate p2m for a single vcpu */
+bool_t p2m_switch_vcpu_altp2m_by_id(struct vcpu *v, unsigned int idx);
+
 /* Check to see if vcpu should be switched to a different p2m. */
-static inline
-void p2m_altp2m_check(struct vcpu *v, uint16_t idx)
-{
-    /* Not supported on ARM. */
-}
+void p2m_altp2m_check(struct vcpu *v, uint16_t idx);
 
 /* Flush all the alternate p2m's for a domain */
 void p2m_flush_altp2m(struct domain *d);
@@ -151,6 +150,9 @@ int p2m_destroy_altp2m_by_id(struct domain *d, unsigned int idx);
 /* Switch alternate p2m for entire domain */
 int p2m_switch_domain_altp2m_by_id(struct domain *d, unsigned int idx);
 
+/* Change a gfn->mfn mapping */
+int p2m_change_altp2m_gfn(struct domain *d, unsigned int idx,
+                          gfn_t old_gfn, gfn_t new_gfn);
 
 #define p2m_is_foreign(_t)  ((_t) == p2m_map_foreign)
 #define p2m_is_ram(_t)      ((_t) == p2m_ram_rw || (_t) == p2m_ram_ro)

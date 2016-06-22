@@ -176,11 +176,15 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
             rc = p2m_set_mem_access(d, _gfn(a.u.set_mem_access.gfn), 1, 0, 0,
                                     a.u.set_mem_access.hvmmem_access,
                                     a.u.set_mem_access.view);
-
         break;
 
     case HVMOP_altp2m_change_gfn:
-        rc = -EOPNOTSUPP;
+        if ( a.u.change_gfn.pad1 || a.u.change_gfn.pad2 )
+            rc = -EINVAL;
+        else
+            rc = p2m_change_altp2m_gfn(d, a.u.change_gfn.view,
+                                       _gfn(a.u.change_gfn.old_gfn),
+                                       _gfn(a.u.change_gfn.new_gfn));
         break;
     }
 
