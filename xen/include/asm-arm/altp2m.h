@@ -2,6 +2,7 @@
  * Alternate p2m
  *
  * Copyright (c) 2014, Intel Corporation.
+ * Copyright (c) 2016, Sergej Proskurin <proskurin@sec.in.tum.de>.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -24,8 +25,7 @@
 /* Alternate p2m on/off per domain */
 static inline bool_t altp2m_active(const struct domain *d)
 {
-    /* Not implemented on ARM. */
-    return 0;
+    return d->arch.altp2m_active;
 }
 
 /* Alternate p2m VCPU */
@@ -34,6 +34,24 @@ static inline uint16_t altp2m_vcpu_idx(const struct vcpu *v)
     /* Not implemented on ARM, should not be reached. */
     BUG();
     return 0;
+}
+
+static inline void altp2m_vcpu_initialise(struct vcpu *v)
+{
+    /* Not implemented on ARM, should not be reached. */
+    BUG();
+}
+
+static inline void altp2m_vcpu_destroy(struct vcpu *v)
+{
+    /* Not implemented on ARM, should not be reached. */
+    BUG();
+}
+
+static inline void altp2m_vcpu_reset(struct vcpu *v)
+{
+    /* Not implemented on ARM, should not be reached. */
+    BUG();
 }
 
 #endif /* __ASM_ARM_ALTP2M_H */
