@@ -2110,6 +2110,73 @@ int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx)
     return rc;
 }
 
+/* Reset this p2m table to be empty */
+static void p2m_flush_table(struct p2m_domain *p2m)
+{
+    struct page_info *top, *pg;
+    mfn_t mfn;
+    unsigned int i;
+
+    /* Check whether the p2m table has already been flushed before. */
+    if ( p2m->root == NULL)
+        return;
+
+    spin_lock(&p2m->lock);
+
+    /*
+     * "Host" p2m tables can have shared entries &c that need a bit more care
+     * when discarding them
+     */
+    ASSERT(!p2m_is_hostp2m(p2m));
+
+    /* Zap the top level of the trie */
+    top = p2m->root;
+
+    /* Clear all concatenated first level pages */
+    for ( i = 0; i < P2M_ROOT_PAGES; i++ )
+    {
+        mfn = _mfn(page_to_mfn(top + i));
+        clear_domain_page(mfn);
+    }
+
+    /* Free the rest of the trie pages back to the paging pool */
+    while ( (pg = page_list_remove_head(&p2m->pages)) )
+        if ( pg != top  )
+        {
+            /*
+             * Before freeing the individual pages, we clear them to prevent
+             * reusing old table entries in future p2m allocations.
+             */
+            mfn = _mfn(page_to_mfn(pg));
+            clear_domain_page(mfn);
+            free_domheap_page(pg);
+        }
+
+    page_list_add(top, &p2m->pages);
+
+    /* Invalidate VTTBR */
+    p2m->vttbr.vttbr = 0;
+    p2m->vttbr.vttbr_baddr = INVALID_MFN;
+
+    spin_unlock(&p2m->lock);
+}
+
+void p2m_flush_altp2m(struct domain *d)
+{
+    unsigned int i;
+
+    altp2m_lock(d);
+
+    for ( i = 0; i < MAX_ALTP2M; i++ )
+    {
+        p2m_flush_table(d->arch.altp2m_p2m[i]);
+        flush_tlb();
+        d->arch.altp2m_vttbr[i] = INVALID_MFN;
+    }
+
+    altp2m_unlock(d);
+}
+
 /*
  * Local variables:
  * mode: C
