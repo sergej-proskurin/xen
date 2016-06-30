@@ -32,6 +32,28 @@
 
 #include <asm/hypercall.h>
 
+#include <asm/hvm/hvm.h>
+
+/* Xen command-line option enabling altp2m */
+static bool_t __initdata opt_altp2m_enabled = 0;
+boolean_param("altp2m", opt_altp2m_enabled);
+
+struct hvm_function_table hvm_funcs __read_mostly = {
+    .name = "ARM_HVM",
+};
+
+/* Initcall enabling hvm functionality. */
+static int __init hvm_enable(void)
+{
+    if ( opt_altp2m_enabled )
+        hvm_funcs.altp2m_supported = 1;
+    else
+        hvm_funcs.altp2m_supported = 0;
+
+    return 0;
+}
+presmp_initcall(hvm_enable);
+
 long do_hvm_op(unsigned long op, XEN_GUEST_HANDLE_PARAM(void) arg)
 {
     long rc = 0;
