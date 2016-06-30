@@ -2110,6 +2110,29 @@ int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx)
     return rc;
 }
 
+int p2m_init_next_altp2m(struct domain *d, uint16_t *idx)
+{
+    int rc = -EINVAL;
+    unsigned int i;
+
+    altp2m_lock(d);
+
+    for ( i = 0; i < MAX_ALTP2M; i++ )
+    {
+        if ( d->arch.altp2m_vttbr[i] != INVALID_MFN )
+            continue;
+
+        p2m_init_altp2m_helper(d, i);
+        *idx = i;
+        rc = 0;
+
+        break;
+    }
+
+    altp2m_unlock(d);
+    return rc;
+}
+
 /* Reset this p2m table to be empty */
 static void p2m_flush_table(struct p2m_domain *p2m)
 {

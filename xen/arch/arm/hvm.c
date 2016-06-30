@@ -140,7 +140,8 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
         break;
 
     case HVMOP_altp2m_create_p2m:
-        rc = -EOPNOTSUPP;
+        if ( !(rc = p2m_init_next_altp2m(d, &a.u.view.view)) )
+            rc = __copy_to_guest(arg, &a, 1) ? -EFAULT : 0;
         break;
 
     case HVMOP_altp2m_destroy_p2m:
