@@ -36,22 +36,8 @@ static inline uint16_t altp2m_vcpu_idx(const struct vcpu *v)
     return 0;
 }
 
-static inline void altp2m_vcpu_initialise(struct vcpu *v)
-{
-    /* Not implemented on ARM, should not be reached. */
-    BUG();
-}
-
-static inline void altp2m_vcpu_destroy(struct vcpu *v)
-{
-    /* Not implemented on ARM, should not be reached. */
-    BUG();
-}
-
-static inline void altp2m_vcpu_reset(struct vcpu *v)
-{
-    /* Not implemented on ARM, should not be reached. */
-    BUG();
-}
+void altp2m_vcpu_initialise(struct vcpu *v);
+void altp2m_vcpu_destroy(struct vcpu *v);
+void altp2m_vcpu_reset(struct vcpu *v);
 
 #endif /* __ASM_ARM_ALTP2M_H */

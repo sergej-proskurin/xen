@@ -2064,6 +2064,52 @@ int p2m_get_mem_access(struct domain *d, gfn_t gfn,
     return ret;
 }
 
+struct p2m_domain *p2m_get_altp2m(struct vcpu *v)
+{
+    unsigned int index = vcpu_altp2m(v).p2midx;
+
+    if ( index == INVALID_ALTP2M )
+        return NULL;
+
+    BUG_ON(index >= MAX_ALTP2M);
+
+    return v->domain->arch.altp2m_p2m[index];
+}
+
+static void p2m_init_altp2m_helper(struct domain *d, unsigned int i)
+{
+    struct p2m_domain *p2m = d->arch.altp2m_p2m[i];
+    struct vttbr_data *vttbr = &p2m->vttbr;
+
+    p2m->lowest_mapped_gfn = INVALID_GFN;
+    p2m->max_mapped_gfn = 0;
+
+    vttbr->vttbr_baddr = page_to_maddr(p2m->root);
+    vttbr->vttbr_vmid = p2m->vmid;
+
+    d->arch.altp2m_vttbr[i] = vttbr->vttbr;
+}
+
+int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx)
+{
+    int rc = -EINVAL;
+
+    if ( idx >= MAX_ALTP2M )
+        return rc;
+
+    altp2m_lock(d);
+
+    if ( d->arch.altp2m_vttbr[idx] == INVALID_MFN )
+    {
+        p2m_init_altp2m_helper(d, idx);
+        rc = 0;
+    }
+
+    altp2m_unlock(d);
+
+    return rc;
+}
+
 /*
  * Local variables:
  * mode: C
