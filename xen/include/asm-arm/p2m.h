@@ -160,7 +160,7 @@ int relinquish_p2m_mapping(struct domain *d);
  *
  * Returns 0 for success or -errno.
  */
-int p2m_alloc_table(struct domain *d);
+int p2m_table_init(struct domain *d);
 
 /* Context switch */
 void p2m_save_state(struct vcpu *p);
