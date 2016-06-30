@@ -1940,6 +1940,79 @@ int p2m_get_mem_access(struct domain *d, gfn_t gfn,
     return ret;
 }
 
+struct p2m_domain *p2m_get_altp2m(struct vcpu *v)
+{
+    unsigned int index = vcpu_altp2m(v).p2midx;
+
+    if ( index == INVALID_ALTP2M )
+        return NULL;
+
+    BUG_ON(index >= MAX_ALTP2M);
+
+    return v->domain->arch.altp2m_p2m[index];
+}
+
+static int p2m_init_altp2m_helper(struct domain *d, unsigned int idx)
+{
+    int rc;
+    struct p2m_domain *p2m = d->arch.altp2m_p2m[idx];
+
+    if ( p2m == NULL )
+    {
+        /* Allocate a new altp2m view. */
+        p2m = xzalloc(struct p2m_domain);
+        if ( p2m == NULL)
+        {
+            rc = -ENOMEM;
+            goto err;
+        }
+    }
+
+    /* Initialize the new altp2m view. */
+    rc = p2m_init_one(d, p2m);
+    if ( rc )
+        goto err;
+
+    /* Allocate a root table for the altp2m view. */
+    rc = p2m_alloc_table(p2m);
+    if ( rc )
+        goto err;
+
+    p2m->p2m_class = p2m_alternate;
+    p2m->access_required = 1;
+    _atomic_set(&p2m->active_vcpus, 0);
+
+    d->arch.altp2m_p2m[idx] = p2m;
+    d->arch.altp2m_vttbr[idx] = p2m->vttbr.vttbr;
+
+    return rc;
+
+err:
+    if ( p2m )
+        xfree(p2m);
+
+    p2m = NULL;
+
+    return rc;
+}
+
+int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx)
+{
+    int rc = -EINVAL;
+
+    if ( idx >= MAX_ALTP2M )
+        return rc;
+
+    altp2m_lock(d);
+
+    if ( d->arch.altp2m_vttbr[idx] == INVALID_VTTBR )
+        rc = p2m_init_altp2m_helper(d, idx);
+
+    altp2m_unlock(d);
+
+    return rc;
+}
+
 /*
  * Local variables:
  * mode: C

@@ -153,6 +153,22 @@ void p2m_altp2m_check(struct vcpu *v, uint16_t idx)
     /* Not supported on ARM. */
 }
 
+/*
+ * Alternate p2m: shadow p2m tables used for alternate memory views.
+ */
+
+/* Get current alternate p2m table */
+struct p2m_domain *p2m_get_altp2m(struct vcpu *v);
+
+/* Flush all the alternate p2m's for a domain */
+static inline void p2m_flush_altp2m(struct domain *d)
+{
+    /* Not supported on ARM. */
+}
+
+/* Make a specific alternate p2m valid */
+int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx);
+
 /* Initialise vmid allocator */
 void p2m_vmid_allocator_init(void);
 
