@@ -145,7 +145,7 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
         break;
 
     case HVMOP_altp2m_destroy_p2m:
-        rc = -EOPNOTSUPP;
+        rc = p2m_destroy_altp2m_by_id(d, a.u.view.view);
         break;
 
     case HVMOP_altp2m_switch_p2m:

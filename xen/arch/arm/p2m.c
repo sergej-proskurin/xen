@@ -2200,6 +2200,38 @@ void p2m_flush_altp2m(struct domain *d)
     altp2m_unlock(d);
 }
 
+int p2m_destroy_altp2m_by_id(struct domain *d, unsigned int idx)
+{
+    struct p2m_domain *p2m;
+    int rc = -EBUSY;
+
+    if ( !idx || idx >= MAX_ALTP2M )
+        return rc;
+
+    domain_pause_except_self(d);
+
+    altp2m_lock(d);
+
+    if ( d->arch.altp2m_vttbr[idx] != INVALID_MFN )
+    {
+        p2m = d->arch.altp2m_p2m[idx];
+
+        if ( !_atomic_read(p2m->active_vcpus) )
+        {
+            p2m_flush_table(p2m);
+            flush_tlb();
+            d->arch.altp2m_vttbr[idx] = INVALID_MFN;
+            rc = 0;
+        }
+    }
+
+    altp2m_unlock(d);
+
+    domain_unpause_except_self(d);
+
+    return rc;
+}
+
 /*
  * Local variables:
  * mode: C
