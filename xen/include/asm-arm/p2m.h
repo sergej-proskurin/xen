@@ -143,6 +143,9 @@ int p2m_init_next_altp2m(struct domain *d, uint16_t *idx);
 /* Make a specific alternate p2m invalid */
 int p2m_destroy_altp2m_by_id(struct domain *d, unsigned int idx);
 
+/* Switch alternate p2m for entire domain */
+int p2m_switch_domain_altp2m_by_id(struct domain *d, unsigned int idx);
+
 #define p2m_is_foreign(_t)  ((_t) == p2m_map_foreign)
 #define p2m_is_ram(_t)      ((_t) == p2m_ram_rw || (_t) == p2m_ram_ro)
 
