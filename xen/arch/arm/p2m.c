@@ -1279,11 +1279,11 @@ void guest_physmap_remove_page(struct domain *d,
     p2m_remove_mapping(d, gfn, (1 << page_order), mfn);
 }
 
-static int p2m_alloc_table(struct domain *d)
+static int p2m_alloc_table(struct p2m_domain *p2m)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
-    struct page_info *page;
     unsigned int i;
+    struct page_info *page;
+    struct vttbr *vttbr = &p2m->vttbr;
 
     page = alloc_domheap_pages(NULL, P2M_ROOT_ORDER, 0);
     if ( page == NULL )
@@ -1295,11 +1295,27 @@ static int p2m_alloc_table(struct domain *d)
 
     p2m->root = page;
 
-    p2m->vttbr.vttbr = page_to_maddr(p2m->root) | ((uint64_t)p2m->vmid & 0xff) << 48;
+    vttbr->vttbr = 0;
+    vttbr->vmid = p2m->vmid & 0xff;
+    vttbr->baddr = page_to_maddr(p2m->root);
+
+    return 0;
+}
+
+static int p2m_table_init(struct domain *d)
+{
+    int rc;
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
+
+    rc = p2m_alloc_table(p2m);
+    if ( rc != 0 )
+        return -ENOMEM;
+
+    d->arch.altp2m_active = false;
 
     /*
      * Make sure that all TLBs corresponding to the new VMID are flushed
-     * before using it
+     * before using it.
      */
     p2m_flush_tlb(p2m);
 
@@ -1401,7 +1417,7 @@ static inline int p2m_init_one(struct domain *d, struct p2m_domain *p2m)
     p2m->vttbr.vttbr = INVALID_VTTBR;
     radix_tree_init(&p2m->mem_access_settings);
 
-    rc = p2m_alloc_table(d);
+    rc = p2m_table_init(d);
 
     return rc;
 }
