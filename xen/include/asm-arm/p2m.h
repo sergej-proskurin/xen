@@ -169,6 +169,9 @@ int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx);
 /* Find an available alternate p2m and make it valid */
 int p2m_init_next_altp2m(struct domain *d, uint16_t *idx);
 
+/* Make a specific alternate p2m invalid */
+int p2m_destroy_altp2m_by_id(struct domain *d, unsigned int idx);
+
 /* Initialise vmid allocator */
 void p2m_vmid_allocator_init(void);
 

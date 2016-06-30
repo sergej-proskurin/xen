@@ -2007,6 +2007,12 @@ static int p2m_init_altp2m_helper(struct domain *d, unsigned int idx)
     d->arch.altp2m_p2m[idx] = p2m;
     d->arch.altp2m_vttbr[idx] = p2m->vttbr.vttbr;
 
+    /*
+     * Make sure that all TLBs corresponding to the new VMID are flushed
+     * before using it.
+     */
+    p2m_flush_tlb(p2m);
+
     return rc;
 
 err:
@@ -2063,6 +2069,12 @@ void p2m_flush_altp2m(struct domain *d)
     unsigned int i;
     struct p2m_domain *p2m;
 
+    /*
+     * If altp2m is active, we are nto allowed to flush altp2m[0]. This special
+     * view is considered as the hostp2m as long as altp2m is active.
+     */
+    ASSERT(!altp2m_active(d));
+
     altp2m_lock(d);
 
     for ( i = 0; i < MAX_ALTP2M; i++ )
@@ -2073,10 +2085,54 @@ void p2m_flush_altp2m(struct domain *d)
         p2m = d->arch.altp2m_p2m[i];
         p2m_flush_table(p2m);
 
+        /* Make sure to flush the TLBs of the associated VMID/altp2m view. */
+        p2m_flush_tlb(p2m);
+
         d->arch.altp2m_vttbr[i] = INVALID_VTTBR;
     }
 
     altp2m_unlock(d);
+}
+
+int p2m_destroy_altp2m_by_id(struct domain *d, unsigned int idx)
+{
+    struct p2m_domain *p2m;
+    int rc = -EBUSY;
+
+    /*
+     * The altp2m[0] is considered as the hostp2m and is used as a safe harbor
+     * to which you can switch as long as altp2m is active. After deactivating
+     * altp2m, the system switches back to the original hostp2m view. That is,
+     * altp2m[0] should only be destroyed/flushed/freed, when altp2m is
+     * deactivated.
+     */
+    if ( !idx || idx >= MAX_ALTP2M )
+        return rc;
+
+    domain_pause_except_self(d);
+
+    altp2m_lock(d);
+
+    if ( d->arch.altp2m_vttbr[idx] != INVALID_VTTBR )
+    {
+        p2m = d->arch.altp2m_p2m[idx];
+
+        if ( !_atomic_read(p2m->active_vcpus) )
+        {
+            p2m_flush_table(p2m);
+
+            /* Make sure to flush the TLBs of the associated VMID/altp2m view. */
+            p2m_flush_tlb(p2m);
+            d->arch.altp2m_vttbr[idx] = INVALID_VTTBR;
+            rc = 0;
+        }
+    }
+
+    altp2m_unlock(d);
+
+    domain_unpause_except_self(d);
+
+    return rc;
 }
 
 /*
