@@ -8,6 +8,9 @@
 #include <xen/p2m-common.h>
 #include <public/memory.h>
 
+#include <asm/atomic.h>
+#include <asm/hvm/hvm.h>
+
 #define paddr_bits PADDR_BITS
 
 /* Holds the bit size of IPAs in p2m tables.  */
@@ -16,6 +19,11 @@ extern unsigned int p2m_ipa_bits;
 struct domain;
 
 extern void memory_type_changed(struct domain *);
+
+typedef enum {
+    p2m_host,
+    p2m_alternate,
+} p2m_class_t;
 
 /* Per-p2m-table state */
 struct p2m_domain {
@@ -66,6 +74,18 @@ struct p2m_domain {
     /* Radix tree to store the p2m_access_t settings as the pte's don't have
      * enough available bits to store this information. */
     struct radix_tree_root mem_access_settings;
+
+    /* Alternate p2m: count of vcpu's currently using this p2m. */
+    atomic_t active_vcpus;
+
+    /* Choose between: host/alternate */
+    p2m_class_t p2m_class;
+
+    /* Back pointer to domain */
+    struct domain *domain;
+
+    /* VTTBR information */
+    struct vttbr_data vttbr;
 };
 
 /* List of possible type for each page in the p2m entry.

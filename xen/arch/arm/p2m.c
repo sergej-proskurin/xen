@@ -1400,19 +1400,103 @@ static void p2m_free_vmid(struct domain *d)
     spin_unlock(&vmid_alloc_lock);
 }
 
-void p2m_teardown(struct domain *d)
+static int p2m_initialise(struct domain *d, struct p2m_domain *p2m)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
+    int ret = 0;
+
+    spin_lock_init(&p2m->lock);
+    INIT_PAGE_LIST_HEAD(&p2m->pages);
+
+    spin_lock(&p2m->lock);
+
+    p2m->domain = d;
+    p2m->access_required = false;
+    p2m->mem_access_enabled = false;
+    p2m->default_access = p2m_access_rwx;
+    p2m->p2m_class = p2m_host;
+    p2m->root = NULL;
+
+    /* Adopt VMID of the associated domain */
+    p2m->vmid = d->arch.p2m.vmid;
+    p2m->vttbr.vttbr = 0;
+    p2m->vttbr.vttbr_vmid = p2m->vmid;
+
+    p2m->max_mapped_gfn = 0;
+    p2m->lowest_mapped_gfn = ULONG_MAX;
+    radix_tree_init(&p2m->mem_access_settings);
+
+    spin_unlock(&p2m->lock);
+
+    return ret;
+}
+
+static void p2m_free_one(struct p2m_domain *p2m)
+{
+    mfn_t mfn;
+    unsigned int i;
     struct page_info *pg;
 
     spin_lock(&p2m->lock);
 
     while ( (pg = page_list_remove_head(&p2m->pages)) )
-        free_domheap_page(pg);
+        if ( pg != p2m->root )
+            free_domheap_page(pg);
 
-    if ( p2m->root )
-        free_domheap_pages(p2m->root, P2M_ROOT_ORDER);
+    for ( i = 0; i < P2M_ROOT_PAGES; i++ )
+    {
+        mfn = _mfn(page_to_mfn(p2m->root) + i);
+        clear_domain_page(mfn);
+    }
+    free_domheap_pages(p2m->root, P2M_ROOT_ORDER);
+    p2m->root = NULL;
 
+    radix_tree_destroy(&p2m->mem_access_settings, NULL);
+
+    spin_unlock(&p2m->lock);
+
+    xfree(p2m);
+}
+
+static struct p2m_domain *p2m_init_one(struct domain *d)
+{
+    struct p2m_domain *p2m = xzalloc(struct p2m_domain);
+
+    if ( !p2m )
+        return NULL;
+
+    if ( p2m_initialise(d, p2m) )
+        goto free_p2m;
+
+    return p2m;
+
+free_p2m:
+    xfree(p2m);
+    return NULL;
+}
+
+static void p2m_teardown_hostp2m(struct domain *d)
+{
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
+    struct page_info *pg = NULL;
+    mfn_t mfn;
+    unsigned int i;
+
+    spin_lock(&p2m->lock);
+
+    while ( (pg = page_list_remove_head(&p2m->pages)) )
+        if ( pg != p2m->root )
+        {
+            mfn = _mfn(page_to_mfn(pg));
+            clear_domain_page(mfn);
+            free_domheap_page(pg);
+        }
+
+    for ( i = 0; i < P2M_ROOT_PAGES; i++ )
+    {
+        mfn = _mfn(page_to_mfn(p2m->root) + i);
+        clear_domain_page(mfn);
+    }
+    free_domheap_pages(p2m->root, P2M_ROOT_ORDER);
     p2m->root = NULL;
 
     p2m_free_vmid(d);
@@ -1422,7 +1506,7 @@ void p2m_teardown(struct domain *d)
     spin_unlock(&p2m->lock);
 }
 
-int p2m_init(struct domain *d)
+static int p2m_init_hostp2m(struct domain *d)
 {
     struct p2m_domain *p2m = &d->arch.p2m;
     int rc = 0;
@@ -1437,6 +1521,8 @@ int p2m_init(struct domain *d)
     if ( rc != 0 )
         goto err;
 
+    p2m->vttbr.vttbr_vmid = p2m->vmid;
+
     d->arch.vttbr = 0;
 
     p2m->root = NULL;
@@ -1450,6 +1536,74 @@ int p2m_init(struct domain *d)
 
 err:
     spin_unlock(&p2m->lock);
+
+    return rc;
+}
+
+static void p2m_teardown_altp2m(struct domain *d)
+{
+    unsigned int i;
+    struct p2m_domain *p2m;
+
+    for ( i = 0; i < MAX_ALTP2M; i++ )
+    {
+        if ( !d->arch.altp2m_p2m[i] )
+            continue;
+
+        p2m = d->arch.altp2m_p2m[i];
+        p2m_free_one(p2m);
+        d->arch.altp2m_vttbr[i] = INVALID_MFN;
+        d->arch.altp2m_p2m[i] = NULL;
+    }
+
+    d->arch.altp2m_active = false;
+}
+
+static int p2m_init_altp2m(struct domain *d)
+{
+    unsigned int i;
+    struct p2m_domain *p2m;
+
+    spin_lock_init(&d->arch.altp2m_lock);
+    for ( i = 0; i < MAX_ALTP2M; i++ )
+    {
+        d->arch.altp2m_vttbr[i] = INVALID_MFN;
+        d->arch.altp2m_p2m[i] = p2m = p2m_init_one(d);
+        if ( p2m == NULL )
+        {
+            p2m_teardown_altp2m(d);
+            return -ENOMEM;
+        }
+        p2m->p2m_class = p2m_alternate;
+        p2m->access_required = 1;
+        _atomic_set(&p2m->active_vcpus, 0);
+    }
+
+    return 0;
+}
+
+void p2m_teardown(struct domain *d)
+{
+    /*
+     * We must teardown altp2m unconditionally because
+     * we initialise it unconditionally.
+     */
+    p2m_teardown_altp2m(d);
+
+    p2m_teardown_hostp2m(d);
+}
+
+int p2m_init(struct domain *d)
+{
+    int rc = 0;
+
+    rc = p2m_init_hostp2m(d);
+    if ( rc )
+        return rc;
+
+    rc = p2m_init_altp2m(d);
+    if ( rc )
+        p2m_teardown_hostp2m(d);
 
     return rc;
 }
