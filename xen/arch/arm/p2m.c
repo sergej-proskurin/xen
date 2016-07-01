@@ -200,9 +200,8 @@ void flush_tlb_domain(struct domain *d)
  * There are no processor functions to do a stage 2 only lookup therefore we
  * do a a software walk.
  */
-static paddr_t __p2m_lookup(struct domain *d, paddr_t paddr, p2m_type_t *t)
+static paddr_t __p2m_lookup(struct p2m_domain *p2m, paddr_t paddr, p2m_type_t *t)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
     const unsigned int offsets[4] = {
         zeroeth_table_offset(paddr),
         first_table_offset(paddr),
@@ -282,10 +281,11 @@ err:
 paddr_t p2m_lookup(struct domain *d, paddr_t paddr, p2m_type_t *t)
 {
     paddr_t ret;
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct vcpu *v = current;
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
 
     spin_lock(&p2m->lock);
-    ret = __p2m_lookup(d, paddr, t);
+    ret = __p2m_lookup(p2m, paddr, t);
     spin_unlock(&p2m->lock);
 
     return ret;
@@ -441,10 +441,12 @@ static inline void p2m_remove_pte(lpae_t *p, bool_t flush_cache)
  *
  * level_shift is the number of bits at the level we want to create.
  */
-static int p2m_create_table(struct domain *d, lpae_t *entry,
-                            int level_shift, bool_t flush_cache)
+static int p2m_create_table(struct domain *d,
+                            struct p2m_domain *p2m,
+                            lpae_t *entry,
+                            int level_shift,
+                            bool_t flush_cache)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
     struct page_info *page;
     lpae_t *p;
     lpae_t pte;
@@ -502,10 +504,9 @@ static int p2m_create_table(struct domain *d, lpae_t *entry,
     return 0;
 }
 
-static int __p2m_get_mem_access(struct domain *d, gfn_t gfn,
+static int __p2m_get_mem_access(struct p2m_domain *p2m, gfn_t gfn,
                                 xenmem_access_t *access)
 {
-    struct p2m_domain *p2m = p2m_get_hostp2m(d);
     void *i;
     unsigned int index;
 
@@ -548,7 +549,7 @@ static int __p2m_get_mem_access(struct domain *d, gfn_t gfn,
          * No setting was found in the Radix tree. Check if the
          * entry exists in the page-tables.
          */
-        paddr_t maddr = __p2m_lookup(d, gfn_x(gfn) << PAGE_SHIFT, NULL);
+        paddr_t maddr = __p2m_lookup(p2m, gfn_x(gfn) << PAGE_SHIFT, NULL);
         if ( INVALID_PADDR == maddr )
             return -ESRCH;
 
@@ -677,17 +678,17 @@ static const paddr_t level_shifts[] =
     { ZEROETH_SHIFT, FIRST_SHIFT, SECOND_SHIFT, THIRD_SHIFT };
 
 static int p2m_shatter_page(struct domain *d,
+                            struct p2m_domain *p2m,
                             lpae_t *entry,
                             unsigned int level,
                             bool_t flush_cache)
 {
     const paddr_t level_shift = level_shifts[level];
-    int rc = p2m_create_table(d, entry,
+    int rc = p2m_create_table(d, p2m, entry,
                               level_shift - PAGE_SHIFT, flush_cache);
 
     if ( !rc )
     {
-        struct p2m_domain *p2m = &d->arch.p2m;
         p2m->stats.shattered[level]++;
         p2m->stats.mappings[level]--;
         p2m->stats.mappings[level+1] += LPAE_ENTRIES;
@@ -704,6 +705,7 @@ static int p2m_shatter_page(struct domain *d,
  * -ve == (-Exxx) error.
  */
 static int apply_one_level(struct domain *d,
+                           struct p2m_domain *p2m,
                            lpae_t *entry,
                            unsigned int level,
                            bool_t flush_cache,
@@ -721,7 +723,6 @@ static int apply_one_level(struct domain *d,
     const paddr_t level_mask = level_masks[level];
     const paddr_t level_shift = level_shifts[level];
 
-    struct p2m_domain *p2m = &d->arch.p2m;
     lpae_t pte;
     const lpae_t orig_pte = *entry;
     int rc;
@@ -776,7 +777,7 @@ static int apply_one_level(struct domain *d,
          * L3) or mem_access is in use. Create a page table and
          * continue to descend so we try smaller allocations.
          */
-        rc = p2m_create_table(d, entry, 0, flush_cache);
+        rc = p2m_create_table(d, p2m, entry, 0, flush_cache);
         if ( rc < 0 )
             return rc;
 
@@ -834,7 +835,7 @@ static int apply_one_level(struct domain *d,
             /* Not present -> create table entry and descend */
             if ( !p2m_valid(orig_pte) )
             {
-                rc = p2m_create_table(d, entry, 0, flush_cache);
+                rc = p2m_create_table(d, p2m, entry, 0, flush_cache);
                 if ( rc < 0 )
                     return rc;
                 return P2M_ONE_DESCEND;
@@ -844,7 +845,7 @@ static int apply_one_level(struct domain *d,
             if ( p2m_mapping(orig_pte) )
             {
                 *flush = true;
-                rc = p2m_shatter_page(d, entry, level, flush_cache);
+                rc = p2m_shatter_page(d, p2m, entry, level, flush_cache);
                 if ( rc < 0 )
                     return rc;
             } /* else: an existing table mapping -> descend */
@@ -881,7 +882,7 @@ static int apply_one_level(struct domain *d,
                  * and descend.
                  */
                 *flush = true;
-                rc = p2m_shatter_page(d, entry, level, flush_cache);
+                rc = p2m_shatter_page(d, p2m, entry, level, flush_cache);
                 if ( rc < 0 )
                     return rc;
 
@@ -966,7 +967,7 @@ static int apply_one_level(struct domain *d,
             /* Shatter large pages as we descend */
             if ( p2m_mapping(orig_pte) )
             {
-                rc = p2m_shatter_page(d, entry, level, flush_cache);
+                rc = p2m_shatter_page(d, p2m, entry, level, flush_cache);
                 if ( rc < 0 )
                     return rc;
             } /* else: an existing table mapping -> descend */
@@ -1011,6 +1012,7 @@ static void update_reference_mapping(struct page_info *page,
 }
 
 static int apply_p2m_changes(struct domain *d,
+                     struct p2m_domain *p2m,
                      enum p2m_operation op,
                      paddr_t start_gpaddr,
                      paddr_t end_gpaddr,
@@ -1021,7 +1023,6 @@ static int apply_p2m_changes(struct domain *d,
                      p2m_access_t a)
 {
     int rc, ret;
-    struct p2m_domain *p2m = &d->arch.p2m;
     lpae_t *mappings[4] = { NULL, NULL, NULL, NULL };
     struct page_info *pages[4] = { NULL, NULL, NULL, NULL };
     paddr_t addr, orig_maddr = maddr;
@@ -1148,7 +1149,7 @@ static int apply_p2m_changes(struct domain *d,
             lpae_t *entry = &mappings[level][offset];
             lpae_t old_entry = *entry;
 
-            ret = apply_one_level(d, entry,
+            ret = apply_one_level(d, p2m, entry,
                                   level, flush_pt, op,
                                   start_gpaddr, end_gpaddr,
                                   &addr, &maddr, &flush,
@@ -1257,7 +1258,7 @@ out:
          * addr keeps the address of the end of the last successfully-inserted
          * mapping.
          */
-        apply_p2m_changes(d, REMOVE, start_gpaddr, addr, orig_maddr,
+        apply_p2m_changes(d, p2m, REMOVE, start_gpaddr, addr, orig_maddr,
                           mattr, 0, p2m_invalid, d->arch.p2m.default_access);
     }
 
@@ -1268,7 +1269,8 @@ int p2m_populate_ram(struct domain *d,
                      paddr_t start,
                      paddr_t end)
 {
-    return apply_p2m_changes(d, ALLOCATE, start, end,
+    return apply_p2m_changes(d, p2m_get_hostp2m(d), ALLOCATE,
+                             start, end,
                              0, MATTR_MEM, 0, p2m_ram_rw,
                              d->arch.p2m.default_access);
 }
@@ -1278,7 +1280,7 @@ int map_regions_rw_cache(struct domain *d,
                          unsigned long nr,
                          unsigned long mfn)
 {
-    return apply_p2m_changes(d, INSERT,
+    return apply_p2m_changes(d, p2m_get_hostp2m(d), INSERT,
                              pfn_to_paddr(start_gfn),
                              pfn_to_paddr(start_gfn + nr),
                              pfn_to_paddr(mfn),
@@ -1291,7 +1293,7 @@ int unmap_regions_rw_cache(struct domain *d,
                            unsigned long nr,
                            unsigned long mfn)
 {
-    return apply_p2m_changes(d, REMOVE,
+    return apply_p2m_changes(d, p2m_get_hostp2m(d), REMOVE,
                              pfn_to_paddr(start_gfn),
                              pfn_to_paddr(start_gfn + nr),
                              pfn_to_paddr(mfn),
@@ -1304,7 +1306,7 @@ int map_mmio_regions(struct domain *d,
                      unsigned long nr,
                      unsigned long mfn)
 {
-    return apply_p2m_changes(d, INSERT,
+    return apply_p2m_changes(d, p2m_get_hostp2m(d), INSERT,
                              pfn_to_paddr(start_gfn),
                              pfn_to_paddr(start_gfn + nr),
                              pfn_to_paddr(mfn),
@@ -1317,7 +1319,7 @@ int unmap_mmio_regions(struct domain *d,
                        unsigned long nr,
                        unsigned long mfn)
 {
-    return apply_p2m_changes(d, REMOVE,
+    return apply_p2m_changes(d, p2m_get_hostp2m(d), REMOVE,
                              pfn_to_paddr(start_gfn),
                              pfn_to_paddr(start_gfn + nr),
                              pfn_to_paddr(mfn),
@@ -1352,7 +1354,7 @@ int guest_physmap_add_entry(struct domain *d,
                             unsigned long page_order,
                             p2m_type_t t)
 {
-    return apply_p2m_changes(d, INSERT,
+    return apply_p2m_changes(d, p2m_get_hostp2m(d), INSERT,
                              pfn_to_paddr(gfn_x(gfn)),
                              pfn_to_paddr(gfn_x(gfn) + (1 << page_order)),
                              pfn_to_paddr(mfn_x(mfn)), MATTR_MEM, 0, t,
@@ -1363,7 +1365,7 @@ void guest_physmap_remove_page(struct domain *d,
                                gfn_t gfn,
                                mfn_t mfn, unsigned int page_order)
 {
-    apply_p2m_changes(d, REMOVE,
+    apply_p2m_changes(d, p2m_get_hostp2m(d), REMOVE,
                       pfn_to_paddr(gfn_x(gfn)),
                       pfn_to_paddr(gfn_x(gfn) + (1<<page_order)),
                       pfn_to_paddr(mfn_x(mfn)), MATTR_MEM, 0, p2m_invalid,
@@ -1696,9 +1698,9 @@ int p2m_init(struct domain *d)
 
 int relinquish_p2m_mapping(struct domain *d)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
 
-    return apply_p2m_changes(d, RELINQUISH,
+    return apply_p2m_changes(d, p2m, RELINQUISH,
                               pfn_to_paddr(p2m->lowest_mapped_gfn),
                               pfn_to_paddr(p2m->max_mapped_gfn),
                               pfn_to_paddr(INVALID_MFN),
@@ -1708,12 +1710,12 @@ int relinquish_p2m_mapping(struct domain *d)
 
 int p2m_cache_flush(struct domain *d, xen_pfn_t start_mfn, xen_pfn_t end_mfn)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
 
     start_mfn = MAX(start_mfn, p2m->lowest_mapped_gfn);
     end_mfn = MIN(end_mfn, p2m->max_mapped_gfn);
 
-    return apply_p2m_changes(d, CACHEFLUSH,
+    return apply_p2m_changes(d, p2m, CACHEFLUSH,
                              pfn_to_paddr(start_mfn),
                              pfn_to_paddr(end_mfn),
                              pfn_to_paddr(INVALID_MFN),
@@ -1743,6 +1745,9 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag)
     xenmem_access_t xma;
     p2m_type_t t;
     struct page_info *page = NULL;
+    struct vcpu *v = current;
+    struct domain *d = v->domain;
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
 
     rc = gva_to_ipa(gva, &ipa, flag);
     if ( rc < 0 )
@@ -1752,7 +1757,7 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag)
      * We do this first as this is faster in the default case when no
      * permission is set on the page.
      */
-    rc = __p2m_get_mem_access(current->domain, _gfn(paddr_to_pfn(ipa)), &xma);
+    rc = __p2m_get_mem_access(p2m, _gfn(paddr_to_pfn(ipa)), &xma);
     if ( rc < 0 )
         goto err;
 
@@ -1801,7 +1806,7 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag)
      * We had a mem_access permission limiting the access, but the page type
      * could also be limiting, so we need to check that as well.
      */
-    maddr = __p2m_lookup(current->domain, ipa, &t);
+    maddr = __p2m_lookup(p2m, ipa, &t);
     if ( maddr == INVALID_PADDR )
         goto err;
 
@@ -2125,7 +2130,7 @@ long p2m_set_mem_access(struct domain *d, gfn_t gfn, uint32_t nr,
         return 0;
     }
 
-    rc = apply_p2m_changes(d, MEMACCESS,
+    rc = apply_p2m_changes(d, p2m, MEMACCESS,
                            pfn_to_paddr(gfn_x(gfn) + start),
                            pfn_to_paddr(gfn_x(gfn) + nr),
                            0, MATTR_MEM, mask, 0, a);
@@ -2141,10 +2146,11 @@ int p2m_get_mem_access(struct domain *d, gfn_t gfn,
                        xenmem_access_t *access)
 {
     int ret;
-    struct p2m_domain *p2m = p2m_get_hostp2m(d);
+    struct vcpu *v = current;
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
 
     spin_lock(&p2m->lock);
-    ret = __p2m_get_mem_access(d, gfn, access);
+    ret = __p2m_get_mem_access(p2m, gfn, access);
     spin_unlock(&p2m->lock);
 
     return ret;
