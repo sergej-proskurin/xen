@@ -15,6 +15,8 @@
 #include <asm/hardirq.h>
 #include <asm/page.h>
 
+#include <asm/altp2m.h>
+
 #ifdef CONFIG_ARM_64
 static unsigned int __read_mostly p2m_root_order;
 static unsigned int __read_mostly p2m_root_level;
@@ -79,12 +81,41 @@ void dump_p2m_lookup(struct domain *d, paddr_t addr)
                  P2M_ROOT_LEVEL, P2M_ROOT_PAGES);
 }
 
+static uint64_t p2m_get_altp2m_vttbr(struct vcpu *v)
+{
+    struct domain *d = v->domain;
+    uint16_t index = vcpu_altp2m(v).p2midx;
+
+    if ( index == INVALID_ALTP2M )
+        return INVALID_MFN;
+
+    BUG_ON(index >= MAX_ALTP2M);
+
+    return d->arch.altp2m_vttbr[index];
+}
+
+static void p2m_load_altp2m_VTTBR(struct vcpu *v)
+{
+    struct domain *d = v->domain;
+    uint64_t vttbr = p2m_get_altp2m_vttbr(v);
+
+    if ( is_idle_domain(d) )
+        return;
+
+    BUG_ON(vttbr == INVALID_MFN);
+    WRITE_SYSREG64(vttbr, VTTBR_EL2);
+
+    isb(); /* Ensure update is visible */
+}
+
 static void p2m_load_VTTBR(struct domain *d)
 {
     if ( is_idle_domain(d) )
         return;
+
     BUG_ON(!d->arch.vttbr);
     WRITE_SYSREG64(d->arch.vttbr, VTTBR_EL2);
+
     isb(); /* Ensure update is visible */
 }
 
@@ -101,7 +132,11 @@ void p2m_restore_state(struct vcpu *n)
     WRITE_SYSREG(hcr & ~HCR_VM, HCR_EL2);
     isb();
 
-    p2m_load_VTTBR(n->domain);
+    if ( altp2m_active(n->domain) )
+        p2m_load_altp2m_VTTBR(n);
+    else
+        p2m_load_VTTBR(n->domain);
+
     isb();
 
     if ( is_32bit_domain(n->domain) )
@@ -119,22 +154,42 @@ void p2m_restore_state(struct vcpu *n)
 void flush_tlb_domain(struct domain *d)
 {
     unsigned long flags = 0;
+    struct vcpu *v = NULL;
 
-    /* Update the VTTBR if necessary with the domain d. In this case,
-     * it's only necessary to flush TLBs on every CPUs with the current VMID
-     * (our domain).
+    /*
+     * Update the VTTBR if necessary with the domain d. In this case, it is only
+     * necessary to flush TLBs on every CPUs with the current VMID (our
+     * domain).
      */
     if ( d != current->domain )
     {
         local_irq_save(flags);
-        p2m_load_VTTBR(d);
-    }
 
-    flush_tlb();
+        /* If altp2m is active, update VTTBR and flush TLBs of every VCPU */
+        if ( altp2m_active(d) )
+        {
+            for_each_vcpu( d, v )
+            {
+                p2m_load_altp2m_VTTBR(v);
+                flush_tlb();
+            }
+        }
+        else
+        {
+            p2m_load_VTTBR(d);
+            flush_tlb();
+        }
+    }
+    else
+        flush_tlb();
 
     if ( d != current->domain )
     {
-        p2m_load_VTTBR(current->domain);
+        /* Make sure altp2m mapping is valid. */
+        if ( altp2m_active(current->domain) )
+            p2m_load_altp2m_VTTBR(current);
+        else
+            p2m_load_VTTBR(current->domain);
         local_irq_restore(flags);
     }
 }
