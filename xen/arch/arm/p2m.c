@@ -93,6 +93,14 @@ static void p2m_load_VTTBR(struct domain *d, struct p2m_domain *p2m)
     isb(); /* Ensure update is visible */
 }
 
+static void p2m_vcpu_load_VTTBR(struct vcpu *v)
+{
+    struct domain *d = v->domain;
+    struct p2m_domain *p2m = unlikely(altp2m_active(d)) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
+
+    p2m_load_VTTBR(d, p2m);
+}
+
 void p2m_save_state(struct vcpu *p)
 {
     p->arch.sctlr = READ_SYSREG(SCTLR_EL1);
@@ -101,19 +109,12 @@ void p2m_save_state(struct vcpu *p)
 void p2m_restore_state(struct vcpu *n)
 {
     register_t hcr;
-    struct domain *d = n->domain;
-    struct p2m_domain *p2m;
 
     hcr = READ_SYSREG(HCR_EL2);
     WRITE_SYSREG(hcr & ~HCR_VM, HCR_EL2);
     isb();
 
-    if ( unlikely(altp2m_active(d)) )
-        p2m = p2m_get_altp2m(n);
-    else
-        p2m = p2m_get_hostp2m(d);
-
-    p2m_load_VTTBR(d, p2m);
+    p2m_vcpu_load_VTTBR(n);
 
     isb();
 
