@@ -1829,10 +1829,11 @@ err:
     return page;
 }
 
-struct page_info *get_page_from_gva(struct domain *d, vaddr_t va,
+struct page_info *get_page_from_gva(struct vcpu *v, vaddr_t va,
                                     unsigned long flags)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct domain *d = v->domain;
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
     struct page_info *page = NULL;
     paddr_t maddr = 0;
     int rc;
@@ -1844,17 +1845,23 @@ struct page_info *get_page_from_gva(struct domain *d, vaddr_t va,
         unsigned long irq_flags;
 
         local_irq_save(irq_flags);
-        p2m_load_VTTBR(d);
+
+        if ( altp2m_active(d) )
+            p2m_load_altp2m_VTTBR(v);
+        else
+            p2m_load_VTTBR(d);
 
         rc = gvirt_to_maddr(va, &maddr, flags);
 
-        p2m_load_VTTBR(current->domain);
+        if ( altp2m_active(current->domain) )
+            p2m_load_altp2m_VTTBR(current);
+        else
+            p2m_load_VTTBR(current->domain);
+
         local_irq_restore(irq_flags);
     }
     else
-    {
         rc = gvirt_to_maddr(va, &maddr, flags);
-    }
 
     if ( rc )
         goto err;
