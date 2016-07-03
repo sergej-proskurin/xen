@@ -14,6 +14,7 @@
 #include <asm/hardirq.h>
 #include <asm/page.h>
 
+#include <asm/vm_event.h>
 #include <asm/altp2m.h>
 
 #ifdef CONFIG_ARM_64
@@ -1861,6 +1862,12 @@ void __init setup_virt_paging(void)
     smp_call_function(setup_virt_paging_one, (void *)val, 1);
 }
 
+void p2m_altp2m_check(struct vcpu *v, uint16_t idx)
+{
+    if ( altp2m_active(v->domain) )
+        p2m_switch_vcpu_altp2m_by_id(v, idx);
+}
+
 bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
 {
     int rc;
@@ -1868,13 +1875,14 @@ bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
     xenmem_access_t xma;
     vm_event_request_t *req;
     struct vcpu *v = current;
-    struct p2m_domain *p2m = p2m_get_hostp2m(v->domain);
+    struct domain *d = v->domain;
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
 
     /* Mem_access is not in use. */
     if ( !p2m->mem_access_enabled )
         return true;
 
-    rc = p2m_get_mem_access(v->domain, _gfn(paddr_to_pfn(gpa)), &xma);
+    rc = p2m_get_mem_access(d, _gfn(paddr_to_pfn(gpa)), &xma);
     if ( rc )
         return true;
 
@@ -1980,6 +1988,14 @@ bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
         req->u.mem_access.flags |= npfec.insn_fetch     ? MEM_ACCESS_X : 0;
         req->vcpu_id = v->vcpu_id;
 
+        vm_event_fill_regs(req);
+
+        if ( altp2m_active(v->domain) )
+        {
+            req->flags |= VM_EVENT_FLAG_ALTERNATE_P2M;
+            req->altp2m_idx = vcpu_altp2m(v).p2midx;
+        }
+
         mem_access_send_req(v->domain, req);
         xfree(req);
     }
@@ -2001,8 +2017,8 @@ int p2m_set_altp2m_mem_access(struct domain *d, struct p2m_domain *hp2m,
     paddr_t gpa = pfn_to_paddr(gfn_x(gfn));
     paddr_t mask = 0;
     mfn_t mfn;
-    unsigned int level;
     unsigned long nr;
+    unsigned int level;
     int rc;
 
     static const p2m_access_t memaccess[] = {
@@ -2025,8 +2041,6 @@ int p2m_set_altp2m_mem_access(struct domain *d, struct p2m_domain *hp2m,
     mfn = __p2m_lookup(ap2m, gfn, &p2mt, &level, NULL);
     p2m_read_unlock(ap2m);
 
-    nr = paddr_to_pfn(level_sizes[level]);
-
     /* Check host p2m if no valid entry in ap2m. */
     if ( mfn_eq(mfn, INVALID_MFN) )
     {
@@ -2046,6 +2060,8 @@ int p2m_set_altp2m_mem_access(struct domain *d, struct p2m_domain *hp2m,
         /* If this is a superpage, copy that first. */
         if ( level != 3 )
         {
+            nr = paddr_to_pfn(level_sizes[level]);
+
             rc = apply_p2m_changes(d, ap2m, INSERT, _gfn(paddr_to_pfn(gpa & mask)),
                                    nr, mfn, 0, p2mt, memaccess[xma_old]);
             if ( rc < 0 )
@@ -2057,6 +2073,9 @@ int p2m_set_altp2m_mem_access(struct domain *d, struct p2m_domain *hp2m,
 
     /* Set mem access attributes - currently supporting only one (4K) page. */
     mask = level_masks[3];
+
+    nr = paddr_to_pfn(level_sizes[level]);
+
     return rc = apply_p2m_changes(d, ap2m, INSERT, _gfn(paddr_to_pfn(gpa & mask)),
                                   nr, mfn, 0, p2mt, a);
 
@@ -2178,6 +2197,119 @@ struct p2m_domain *p2m_get_altp2m(struct vcpu *v)
     BUG_ON(index >= MAX_ALTP2M);
 
     return v->domain->arch.altp2m_p2m[index];
+}
+
+bool_t p2m_switch_vcpu_altp2m_by_id(struct vcpu *v, unsigned int idx)
+{
+    struct domain *d = v->domain;
+    bool_t rc = 0;
+
+    if ( idx >= MAX_ALTP2M )
+        return rc;
+
+    altp2m_lock(d);
+
+    if ( d->arch.altp2m_vttbr[idx] != INVALID_VTTBR )
+    {
+        if ( idx != vcpu_altp2m(v).p2midx )
+        {
+            atomic_dec(&p2m_get_altp2m(v)->active_vcpus);
+            vcpu_altp2m(v).p2midx = idx;
+            atomic_inc(&p2m_get_altp2m(v)->active_vcpus);
+        }
+        rc = 1;
+    }
+
+    altp2m_unlock(d);
+
+    return rc;
+}
+
+/*
+ * If the fault is for a not present entry:
+ *     if the entry in the host p2m has a valid mfn, copy it and retry
+ *     else indicate that outer handler should handle fault
+ *
+ * If the fault is for a present entry:
+ *     indicate that outer handler should handle fault
+ */
+bool_t p2m_altp2m_lazy_copy(struct vcpu *v, paddr_t gpa,
+                            unsigned long gva, struct npfec npfec,
+                            struct p2m_domain **ap2m)
+{
+    struct domain *d = v->domain;
+    struct p2m_domain *hp2m = p2m_get_hostp2m(v->domain);
+    p2m_type_t p2mt;
+    xenmem_access_t xma;
+    paddr_t maddr, mask = 0;
+    gfn_t gfn = _gfn(paddr_to_pfn(gpa));
+    mfn_t mfn;
+    unsigned int level, mattr;
+    unsigned long nr;
+    int rc = 0;
+
+    static const p2m_access_t memaccess[] = {
+#define ACCESS(ac) [XENMEM_access_##ac] = p2m_access_##ac
+        ACCESS(n),
+        ACCESS(r),
+        ACCESS(w),
+        ACCESS(rw),
+        ACCESS(x),
+        ACCESS(rx),
+        ACCESS(wx),
+        ACCESS(rwx),
+        ACCESS(rx2rw),
+        ACCESS(n2rwx),
+#undef ACCESS
+    };
+
+    *ap2m = p2m_get_altp2m(v);
+    if ( *ap2m == NULL)
+        return 0;
+
+    /* Check if entry is part of the altp2m view */
+    p2m_read_lock(*ap2m);
+    mfn = __p2m_lookup(*ap2m, gfn, NULL, NULL, NULL);
+    p2m_read_unlock(*ap2m);
+    if ( !mfn_eq(mfn, INVALID_MFN) )
+        return 0;
+
+    /* Check if entry is part of the host p2m view */
+    p2m_read_lock(hp2m);
+    mfn = __p2m_lookup(hp2m, gfn, &p2mt, &level, &mattr);
+    if ( mfn_eq(mfn, INVALID_MFN) )
+        goto out;
+
+    rc = __p2m_get_mem_access(hp2m, gfn, &xma);
+    if ( rc )
+        goto out;
+
+    mask = level_masks[level];
+
+    /* Align maddr considering the associated page table entry level. */
+    maddr = pfn_to_paddr(mfn_x(mfn)) & mask;
+
+    nr = paddr_to_pfn(level_sizes[level]);
+
+    rc = apply_p2m_changes(d, *ap2m, INSERT,
+                           _gfn(paddr_to_pfn((gpa & mask))), nr,
+                           _mfn(paddr_to_pfn(maddr)), 0, p2mt,
+                           memaccess[xma]);
+    if ( rc )
+    {
+        gdprintk(XENLOG_ERR, "failed to set entry for %lx -> %lx p2m %lx\n",
+                (unsigned long)pfn_to_paddr(gfn_x(gfn)), (unsigned long)(maddr), (unsigned long)*ap2m);
+        domain_crash(hp2m->domain);
+    }
+
+    p2m_read_unlock(hp2m);
+
+    return 1;
+
+out:
+    p2m_read_unlock(hp2m);
+
+    return 0;
 }
 
 static int p2m_init_altp2m_helper(struct domain *d, unsigned int idx)
