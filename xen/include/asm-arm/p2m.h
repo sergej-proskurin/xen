@@ -115,12 +115,6 @@ void p2m_mem_access_emulate_check(struct vcpu *v,
     /* Not supported on ARM. */
 }
 
-static inline
-void p2m_altp2m_check(struct vcpu *v, uint16_t idx)
-{
-    /* Not supported on ARM. */
-}
-
 /*
  * Alternate p2m: shadow p2m tables used for alternate memory views.
  */
@@ -131,11 +125,22 @@ void p2m_altp2m_check(struct vcpu *v, uint16_t idx)
 /* Get current alternate p2m table */
 struct p2m_domain *p2m_get_altp2m(struct vcpu *v);
 
+/* Switch alternate p2m for a single vcpu */
+bool_t p2m_switch_vcpu_altp2m_by_id(struct vcpu *v, unsigned int idx);
+
+/* Check to see if vcpu should be switched to a different p2m. */
+void p2m_altp2m_check(struct vcpu *v, uint16_t idx);
+
 /* Flush all the alternate p2m's for a domain */
 void p2m_flush_altp2m(struct domain *d);
 
 /* Make a specific alternate p2m valid */
 int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx);
+
+/* Alternate p2m paging */
+bool_t p2m_altp2m_lazy_copy(struct vcpu *v, paddr_t gpa,
+                            unsigned long gla, struct npfec npfec,
+                            struct p2m_domain **ap2m);
 
 /* Find an available alternate p2m and make it valid */
 int p2m_init_next_altp2m(struct domain *d, uint16_t *idx);

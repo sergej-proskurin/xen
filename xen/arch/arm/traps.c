@@ -48,6 +48,8 @@
 #include <asm/gic.h>
 #include <asm/vgic.h>
 
+#include <asm/altp2m.h>
+
 /* The base of the stack must always be double-word aligned, which means
  * that both the kernel half of struct cpu_user_regs (which is pushed in
  * entry.S) and struct cpu_info (which lives at the bottom of a Xen
@@ -2383,34 +2385,63 @@ static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
 {
     int rc;
     register_t gva = READ_SYSREG(FAR_EL2);
+    struct vcpu *v = current;
+    struct domain *d = v->domain;
+    struct p2m_domain *p2m = NULL;
+    paddr_t gpa;
+
+    if ( hsr.iabt.s1ptw )
+        gpa = get_faulting_ipa();
+    else
+    {
+        /*
+         * Flush the TLB to make sure the DTLB is clear before
+         * doing GVA->IPA translation. If we got here because of
+         * an entry only present in the ITLB, this translation may
+         * still be inaccurate.
+         */
+        flush_tlb_local();
+
+        rc = gva_to_ipa(gva, &gpa, GV2M_READ);
+        if ( rc == -EFAULT )
+            goto bad_insn_abort;
+    }
 
     switch ( hsr.iabt.ifsc & 0x3f )
     {
+    case FSC_FLT_TRANS ... FSC_FLT_TRANS + 3:
+    {
+        if ( altp2m_active(d) )
+        {
+            const struct npfec npfec = {
+                .insn_fetch = 1,
+                .gla_valid = 1,
+                .kind = hsr.iabt.s1ptw ? npfec_kind_in_gpt : npfec_kind_with_gla
+            };
+
+            /*
+             * Copy the entire page of the failing instruction into the
+             * currently active altp2m view.
+             */
+            if ( p2m_altp2m_lazy_copy(v, gpa, gva, npfec, &p2m) )
+                return;
+
+            rc = p2m_mem_access_check(gpa, gva, npfec);
+
+            /* Trap was triggered by mem_access, work here is done */
+            if ( !rc )
+                return;
+        }
+
+        break;
+    }
     case FSC_FLT_PERM ... FSC_FLT_PERM + 3:
     {
-        paddr_t gpa;
         const struct npfec npfec = {
             .insn_fetch = 1,
             .gla_valid = 1,
             .kind = hsr.iabt.s1ptw ? npfec_kind_in_gpt : npfec_kind_with_gla
         };
-
-        if ( hsr.iabt.s1ptw )
-            gpa = get_faulting_ipa();
-        else
-        {
-            /*
-             * Flush the TLB to make sure the DTLB is clear before
-             * doing GVA->IPA translation. If we got here because of
-             * an entry only present in the ITLB, this translation may
-             * still be inaccurate.
-             */
-            flush_tlb_local();
-
-            rc = gva_to_ipa(gva, &gpa, GV2M_READ);
-            if ( rc == -EFAULT )
-                goto bad_insn_abort;
-        }
 
         rc = p2m_mem_access_check(gpa, gva, npfec);
 
@@ -2429,6 +2460,8 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
                                      const union hsr hsr)
 {
     const struct hsr_dabt dabt = hsr.dabt;
+    struct vcpu *v = current;
+    struct p2m_domain *p2m = NULL;
     int rc;
     mmio_info_t info;
 
@@ -2449,6 +2482,12 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
         info.gpa = get_faulting_ipa();
     else
     {
+        /*
+         * When using altp2m, this flush is required to get rid of old TLB
+         * entries and use the new, lazily copied, ap2m entries.
+         */
+        flush_tlb_local();
+
         rc = gva_to_ipa(info.gva, &info.gpa, GV2M_READ);
         if ( rc == -EFAULT )
             goto bad_data_abort;
@@ -2456,6 +2495,33 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
 
     switch ( dabt.dfsc & 0x3f )
     {
+    case FSC_FLT_TRANS ... FSC_FLT_TRANS + 3:
+    {
+        if ( altp2m_active(current->domain) )
+        {
+            const struct npfec npfec = {
+                .read_access = !dabt.write,
+                .write_access = dabt.write,
+                .gla_valid = 1,
+                .kind = dabt.s1ptw ? npfec_kind_in_gpt : npfec_kind_with_gla
+            };
+
+            /*
+             * Copy the entire page of the failing data access into the
+             * currently active altp2m view.
+             */
+            if ( p2m_altp2m_lazy_copy(v, info.gpa, info.gva, npfec, &p2m) )
+                return;
+
+            rc = p2m_mem_access_check(info.gpa, info.gva, npfec);
+
+            /* Trap was triggered by mem_access, work here is done */
+            if ( !rc )
+                return;
+        }
+
+        break;
+    }
     case FSC_FLT_PERM ... FSC_FLT_PERM + 3:
     {
         const struct npfec npfec = {
