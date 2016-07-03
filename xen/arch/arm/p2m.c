@@ -51,7 +51,8 @@ static bool_t p2m_mapping(lpae_t pte)
 
 void p2m_dump_info(struct domain *d)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct vcpu *v = current;
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
 
     spin_lock(&p2m->lock);
     printk("p2m mappings for domain %d (vmid %d):\n",
@@ -71,7 +72,8 @@ void memory_type_changed(struct domain *d)
 
 void dump_p2m_lookup(struct domain *d, paddr_t addr)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct vcpu *v = current;
+    struct p2m_domain *p2m = altp2m_active(d) ? p2m_get_altp2m(v) : p2m_get_hostp2m(d);
 
     printk("dom%d IPA 0x%"PRIpaddr"\n", d->domain_id, addr);
 
