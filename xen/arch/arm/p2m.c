@@ -174,7 +174,8 @@ static void p2m_flush_tlb(struct p2m_domain *p2m)
  * There are no processor functions to do a stage 2 only lookup therefore we
  * do a a software walk.
  */
-static mfn_t __p2m_lookup(struct p2m_domain *p2m, gfn_t gfn, p2m_type_t *t)
+static mfn_t __p2m_lookup(struct p2m_domain *p2m, gfn_t gfn, p2m_type_t *t,
+                          unsigned int *level, unsigned int *mattr)
 {
     const paddr_t paddr = pfn_to_paddr(gfn_x(gfn));
     const unsigned int offsets[4] = {
@@ -190,13 +191,16 @@ static mfn_t __p2m_lookup(struct p2m_domain *p2m, gfn_t gfn, p2m_type_t *t)
     mfn_t mfn = INVALID_MFN;
     paddr_t mask = 0;
     p2m_type_t _t;
-    unsigned int level, root_table;
+    unsigned int _level, _mattr;
+    unsigned int root_table;
 
     ASSERT(p2m_is_locked(p2m));
     BUILD_BUG_ON(THIRD_MASK != PAGE_MASK);
 
-    /* Allow t to be NULL */
+    /* Allow t. level, and mattr to be NULL */
     t = t ?: &_t;
+    level = level ?: &_level;
+    mattr = mattr ?: &_mattr;
 
     *t = p2m_invalid;
 
@@ -219,20 +223,20 @@ static mfn_t __p2m_lookup(struct p2m_domain *p2m, gfn_t gfn, p2m_type_t *t)
 
     ASSERT(P2M_ROOT_LEVEL < 4);
 
-    for ( level = P2M_ROOT_LEVEL ; level < 4 ; level++ )
+    for ( *level = P2M_ROOT_LEVEL ; *level < 4 ; (*level)++ )
     {
-        mask = masks[level];
+        mask = masks[*level];
 
-        pte = map[offsets[level]];
+        pte = map[offsets[*level]];
 
-        if ( level == 3 && !p2m_table(pte) )
+        if ( *level == 3 && !p2m_table(pte) )
             /* Invalid, clobber the pte */
             pte.bits = 0;
-        if ( level == 3 || !p2m_table(pte) )
+        if ( *level == 3 || !p2m_table(pte) )
             /* Done */
             break;
 
-        ASSERT(level < 3);
+        ASSERT(*level < 3);
 
         /* Map for next level */
         unmap_domain_page(map);
@@ -248,6 +252,7 @@ static mfn_t __p2m_lookup(struct p2m_domain *p2m, gfn_t gfn, p2m_type_t *t)
         mfn = _mfn(paddr_to_pfn((pte.bits & PADDR_MASK & mask) |
                                 (paddr & ~mask)));
         *t = pte.p2m.type;
+        *mattr = pte.p2m.mattr;
     }
 
 err:
@@ -260,7 +265,7 @@ mfn_t p2m_lookup(struct domain *d, gfn_t gfn, p2m_type_t *t)
     struct p2m_domain *p2m = p2m_get_hostp2m(d);
 
     p2m_read_lock(p2m);
-    ret = __p2m_lookup(p2m, gfn, t);
+    ret = __p2m_lookup(p2m, gfn, t, NULL, NULL);
     p2m_read_unlock(p2m);
 
     return ret;
@@ -523,7 +528,7 @@ static int __p2m_get_mem_access(struct p2m_domain *p2m, gfn_t gfn,
          * No setting was found in the Radix tree. Check if the
          * entry exists in the page-tables.
          */
-        mfn_t mfn = __p2m_lookup(p2m, gfn, NULL);
+        mfn_t mfn = __p2m_lookup(p2m, gfn, NULL, NULL, NULL);
 
         if ( mfn_eq(mfn, INVALID_MFN) )
             return -ESRCH;
@@ -718,7 +723,7 @@ static void p2m_altp2m_propagate_change(struct domain *d,
         p2m = d->arch.altp2m_p2m[i];
 
         p2m_read_lock(p2m);
-        m = __p2m_lookup(p2m, sgfn, NULL);
+        m = __p2m_lookup(p2m, sgfn, NULL, NULL, NULL);
         p2m_read_unlock(p2m);
 
         /* Check for a dropped page that may impact this altp2m. */
@@ -752,8 +757,8 @@ static void p2m_altp2m_propagate_change(struct domain *d,
             }
         }
         else if ( !mfn_eq(m, INVALID_MFN) )
-            apply_p2m_changes(d, p2m, INSERT,
-                              sgfn, nr, smfn, mask, p2mt, p2ma);
+            apply_p2m_changes(d, p2m, INSERT, sgfn, nr, smfn,
+                              mask, p2mt, p2ma);
     }
 
 out:
@@ -826,7 +831,7 @@ static int apply_one_level(struct domain *d,
                  * of the p2m tree which we would be about to lop off.
                  */
                 BUG_ON(level < 3 && p2m_table(orig_pte));
-                if ( level == 3 )
+                if ( level == 3 && p2m_is_hostp2m(p2m) )
                     p2m_put_l3_page(orig_pte);
             }
             else /* New mapping */
@@ -925,7 +930,7 @@ static int apply_one_level(struct domain *d,
 
         p2m->stats.mappings[level]--;
 
-        if ( level == 3 )
+        if ( level == 3 && p2m_is_hostp2m(p2m) )
             p2m_put_l3_page(orig_pte);
 
         /*
@@ -1528,7 +1533,7 @@ static inline int p2m_init_one(struct domain *d, struct p2m_domain *p2m)
     p2m->default_access = p2m_access_rwx;
     p2m->root = NULL;
     p2m->max_mapped_gfn = _gfn(0);
-    p2m->lowest_mapped_gfn = _gfn(ULONG_MAX);
+    p2m->lowest_mapped_gfn = INVALID_GFN;
     p2m->vttbr.vttbr = INVALID_VTTBR;
     radix_tree_init(&p2m->mem_access_settings);
 
@@ -1722,7 +1727,7 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag)
      * We had a mem_access permission limiting the access, but the page type
      * could also be limiting, so we need to check that as well.
      */
-    mfn = __p2m_lookup(p2m, gfn, &t);
+    mfn = __p2m_lookup(p2m, gfn, &t, NULL, NULL);
     if ( mfn_eq(mfn, INVALID_MFN) )
         goto err;
 
@@ -1986,6 +1991,81 @@ bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
     return false;
 }
 
+static inline
+int p2m_set_altp2m_mem_access(struct domain *d, struct p2m_domain *hp2m,
+                              struct p2m_domain *ap2m, p2m_access_t a,
+                              gfn_t gfn)
+{
+    p2m_type_t p2mt;
+    xenmem_access_t xma_old;
+    paddr_t gpa = pfn_to_paddr(gfn_x(gfn));
+    paddr_t mask = 0;
+    mfn_t mfn;
+    unsigned int level;
+    unsigned long nr;
+    int rc;
+
+    static const p2m_access_t memaccess[] = {
+#define ACCESS(ac) [XENMEM_access_##ac] = p2m_access_##ac
+        ACCESS(n),
+        ACCESS(r),
+        ACCESS(w),
+        ACCESS(rw),
+        ACCESS(x),
+        ACCESS(rx),
+        ACCESS(wx),
+        ACCESS(rwx),
+        ACCESS(rx2rw),
+        ACCESS(n2rwx),
+#undef ACCESS
+    };
+
+    /* Check if entry is part of the altp2m view. */
+    p2m_read_lock(ap2m);
+    mfn = __p2m_lookup(ap2m, gfn, &p2mt, &level, NULL);
+    p2m_read_unlock(ap2m);
+
+    nr = paddr_to_pfn(level_sizes[level]);
+
+    /* Check host p2m if no valid entry in ap2m. */
+    if ( mfn_eq(mfn, INVALID_MFN) )
+    {
+        p2m_read_lock(hp2m);
+
+        /* Check if entry is part of the host p2m view. */
+        mfn = __p2m_lookup(hp2m, gfn, &p2mt, &level, NULL);
+        if (  mfn_eq(mfn, INVALID_MFN) || p2mt != p2m_ram_rw )
+            goto out;
+
+        rc = __p2m_get_mem_access(hp2m, gfn, &xma_old);
+        if ( rc )
+            goto out;
+
+        mask = level_masks[level];
+
+        /* If this is a superpage, copy that first. */
+        if ( level != 3 )
+        {
+            rc = apply_p2m_changes(d, ap2m, INSERT, _gfn(paddr_to_pfn(gpa & mask)),
+                                   nr, mfn, 0, p2mt, memaccess[xma_old]);
+            if ( rc < 0 )
+                goto out;
+        }
+
+        p2m_read_unlock(hp2m);
+    }
+
+    /* Set mem access attributes - currently supporting only one (4K) page. */
+    mask = level_masks[3];
+    return rc = apply_p2m_changes(d, ap2m, INSERT, _gfn(paddr_to_pfn(gpa & mask)),
+                                  nr, mfn, 0, p2mt, a);
+
+out:
+    p2m_read_unlock(hp2m);
+
+    return -ESRCH;
+}
+
 /*
  * Set access type for a region of pfns.
  * If gfn == INVALID_GFN, sets the default access type.
@@ -1994,7 +2074,7 @@ long p2m_set_mem_access(struct domain *d, gfn_t gfn, uint32_t nr,
                         uint32_t start, uint32_t mask, xenmem_access_t access,
                         unsigned int altp2m_idx)
 {
-    struct p2m_domain *p2m = p2m_get_hostp2m(d);
+    struct p2m_domain *hp2m = p2m_get_hostp2m(d), *ap2m = NULL;
     p2m_access_t a;
     long rc = 0;
 
@@ -2013,33 +2093,60 @@ long p2m_set_mem_access(struct domain *d, gfn_t gfn, uint32_t nr,
 #undef ACCESS
     };
 
+    /* altp2m view 0 is treated as the hostp2m */
+    if ( altp2m_idx )
+    {
+        if ( altp2m_idx >= MAX_ALTP2M ||
+             d->arch.altp2m_vttbr[altp2m_idx] == INVALID_VTTBR )
+            return -EINVAL;
+
+        ap2m = d->arch.altp2m_p2m[altp2m_idx];
+    }
+
     switch ( access )
     {
     case 0 ... ARRAY_SIZE(memaccess) - 1:
         a = memaccess[access];
         break;
     case XENMEM_access_default:
-        a = p2m->default_access;
+        a = hp2m->default_access;
         break;
     default:
         return -EINVAL;
     }
 
-    /*
-     * Flip mem_access_enabled to true when a permission is set, as to prevent
-     * allocating or inserting super-pages.
-     */
-    p2m->mem_access_enabled = true;
-
     /* If request to set default access. */
     if ( gfn_eq(gfn, INVALID_GFN) )
     {
-        p2m->default_access = a;
+        hp2m->default_access = a;
         return 0;
     }
 
-    rc = apply_p2m_changes(d, p2m, MEMACCESS, gfn_add(gfn, start),
-                           (nr - start), INVALID_MFN, mask, 0, a);
+    if ( ap2m )
+    {
+        /*
+         * Flip mem_access_enabled to true when a permission is set, as to prevent
+         * allocating or inserting super-pages.
+         */
+        ap2m->mem_access_enabled = true;
+
+        /*
+         * ARM altp2m currently supports only setting of memory access rights
+         * of only one (4K) page at a time.
+         */
+        rc = p2m_set_altp2m_mem_access(d, hp2m, ap2m, a, gfn);
+    }
+    else
+    {
+        /*
+         * Flip mem_access_enabled to true when a permission is set, as to prevent
+         * allocating or inserting super-pages.
+         */
+        hp2m->mem_access_enabled = true;
+
+        rc = apply_p2m_changes(d, hp2m, MEMACCESS, gfn_add(gfn, start),
+                               (nr - start), INVALID_MFN, mask, 0, a);
+    }
     if ( rc < 0 )
         return rc;
     else if ( rc > 0 )
