@@ -1320,10 +1320,8 @@ void p2m_vmid_allocator_init(void)
     set_bit(INVALID_VMID, vmid_mask);
 }
 
-static int p2m_alloc_vmid(struct domain *d)
+static int p2m_alloc_vmid(struct domain *d, struct p2m_domain *p2m)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
-
     int rc, nr;
 
     spin_lock(&vmid_alloc_lock);
@@ -1350,9 +1348,8 @@ out:
     return rc;
 }
 
-static void p2m_free_vmid(struct domain *d)
+static void p2m_free_vmid(struct p2m_domain *p2m)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
     spin_lock(&vmid_alloc_lock);
     if ( p2m->vmid != INVALID_VMID )
         clear_bit(p2m->vmid, vmid_mask);
@@ -1373,7 +1370,7 @@ void p2m_teardown(struct domain *d)
 
     p2m->root = NULL;
 
-    p2m_free_vmid(d);
+    p2m_free_vmid(p2m);
 
     radix_tree_destroy(&p2m->mem_access_settings, NULL);
 }
@@ -1388,7 +1385,7 @@ int p2m_init(struct domain *d)
 
     p2m->vmid = INVALID_VMID;
 
-    rc = p2m_alloc_vmid(d);
+    rc = p2m_alloc_vmid(d, p2m);
     if ( rc != 0 )
         return rc;
 
