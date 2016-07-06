@@ -1347,9 +1347,8 @@ static void p2m_free_vmid(struct p2m_domain *p2m)
     spin_unlock(&vmid_alloc_lock);
 }
 
-void p2m_teardown(struct domain *d)
+static inline void p2m_free_one(struct p2m_domain *p2m)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
     struct page_info *pg;
 
     spin_lock(&p2m->lock);
@@ -1369,9 +1368,8 @@ void p2m_teardown(struct domain *d)
     spin_unlock(&p2m->lock);
 }
 
-int p2m_init(struct domain *d)
+static inline int p2m_init_one(struct domain *d, struct p2m_domain *p2m)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
     int rc = 0;
 
     spin_lock_init(&p2m->lock);
@@ -1384,21 +1382,46 @@ int p2m_init(struct domain *d)
     if ( rc != 0 )
         goto err;
 
-    d->arch.vttbr = 0;
-
+    p2m->domain = d;
+    p2m->access_required = false;
+    p2m->mem_access_enabled = false;
+    p2m->default_access = p2m_access_rwx;
     p2m->root = NULL;
-
     p2m->max_mapped_gfn = _gfn(0);
     p2m->lowest_mapped_gfn = _gfn(ULONG_MAX);
-
-    p2m->default_access = p2m_access_rwx;
-    p2m->mem_access_enabled = false;
     radix_tree_init(&p2m->mem_access_settings);
 
 err:
     spin_unlock(&p2m->lock);
 
     return rc;
+}
+
+static void p2m_teardown_hostp2m(struct domain *d)
+{
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
+
+    p2m_free_one(p2m);
+}
+
+void p2m_teardown(struct domain *d)
+{
+    p2m_teardown_hostp2m(d);
+}
+
+static int p2m_init_hostp2m(struct domain *d)
+{
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
+
+    d->arch.vttbr = 0;
+    p2m->p2m_class = p2m_host;
+
+    return p2m_init_one(d, p2m);
+}
+
+int p2m_init(struct domain *d)
+{
+    return p2m_init_hostp2m(d);
 }
 
 int relinquish_p2m_mapping(struct domain *d)
