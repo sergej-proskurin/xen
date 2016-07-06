@@ -1337,11 +1337,10 @@ void p2m_vmid_allocator_init(void)
     set_bit(INVALID_VMID, vmid_mask);
 }
 
-static int p2m_alloc_vmid(struct domain *d)
+static int p2m_alloc_vmid(struct p2m_domain *p2m)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
-
     int rc, nr;
+    struct domain *d = p2m->domain;
 
     spin_lock(&vmid_alloc_lock);
 
@@ -1367,9 +1366,8 @@ out:
     return rc;
 }
 
-static void p2m_free_vmid(struct domain *d)
+static void p2m_free_vmid(struct p2m_domain *p2m)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
     spin_lock(&vmid_alloc_lock);
     if ( p2m->vmid != INVALID_VMID )
         clear_bit(p2m->vmid, vmid_mask);
@@ -1399,7 +1397,7 @@ static inline void p2m_free_one(struct p2m_domain *p2m)
     p2m_flush_table(p2m);
 
     /* Free VMID and reset VTTBR */
-    p2m_free_vmid(p2m->domain);
+    p2m_free_vmid(p2m);
     p2m->vttbr.vttbr = INVALID_VTTBR;
 
     if ( p2m->root )
@@ -1417,7 +1415,7 @@ int p2m_init_one(struct domain *d, struct p2m_domain *p2m)
     rwlock_init(&p2m->lock);
     INIT_PAGE_LIST_HEAD(&p2m->pages);
 
-    rc = p2m_alloc_vmid(d);
+    rc = p2m_alloc_vmid(p2m);
     if ( rc != 0 )
         return rc;
 
