@@ -18,6 +18,11 @@ struct domain;
 
 extern void memory_type_changed(struct domain *);
 
+typedef enum {
+    p2m_host,
+    p2m_alternate,
+} p2m_class_t;
+
 /* Per-p2m-table state */
 struct p2m_domain {
     /* Lock that protects updates to the p2m */
@@ -78,6 +83,12 @@ struct p2m_domain {
      * enough available bits to store this information.
      */
     struct radix_tree_root mem_access_settings;
+
+    /* Choose between: host/alternate */
+    p2m_class_t p2m_class;
+
+    /* Back pointer to domain */
+    struct domain *domain;
 };
 
 /*
