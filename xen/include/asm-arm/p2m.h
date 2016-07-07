@@ -9,6 +9,12 @@
 #include <xen/p2m-common.h>
 #include <public/memory.h>
 
+#include <asm/atomic.h>
+
+#define MAX_ALTP2M      10      /* ARM might contain an arbitrary number of
+                                   altp2m views. */
+#define INVALID_ALTP2M  0xffff
+
 #define paddr_bits PADDR_BITS
 
 /* Holds the bit size of IPAs in p2m tables.  */
@@ -38,7 +44,7 @@ struct p2m_domain {
     uint8_t vmid;
 
     /* Current Translation Table Base Register for the p2m */
-    uint64_t vttbr;
+    struct vttbr vttbr;
 
     /*
      * Highest guest frame that's ever been mapped in the p2m
@@ -83,6 +89,9 @@ struct p2m_domain {
      * enough available bits to store this information.
      */
     struct radix_tree_root mem_access_settings;
+
+    /* Alternate p2m: count of vcpu's currently using this p2m. */
+    atomic_t active_vcpus;
 
     /* Choose between: host/alternate */
     p2m_class_t p2m_class;
