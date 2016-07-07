@@ -14,6 +14,8 @@
 #include <asm/hardirq.h>
 #include <asm/page.h>
 
+#include <asm/altp2m.h>
+
 #ifdef CONFIG_ARM_64
 static unsigned int __read_mostly p2m_root_order;
 static unsigned int __read_mostly p2m_root_level;
@@ -84,7 +86,7 @@ static void p2m_load_VTTBR(struct domain *d)
 {
     if ( is_idle_domain(d) )
         return;
-    BUG_ON(!d->arch.vttbr);
+    BUG_ON(d->arch.vttbr == INVALID_VTTBR);
     WRITE_SYSREG64(d->arch.vttbr, VTTBR_EL2);
     isb(); /* Ensure update is visible */
 }
@@ -1361,6 +1363,8 @@ static inline void p2m_free_one(struct p2m_domain *p2m)
 
     p2m->root = NULL;
 
+    p2m->vttbr.vttbr = INVALID_VTTBR;
+
     p2m_free_vmid(p2m);
 
     radix_tree_destroy(&p2m->mem_access_settings, NULL);
@@ -1389,6 +1393,7 @@ static inline int p2m_init_one(struct domain *d, struct p2m_domain *p2m)
     p2m->root = NULL;
     p2m->max_mapped_gfn = _gfn(0);
     p2m->lowest_mapped_gfn = _gfn(ULONG_MAX);
+    p2m->vttbr.vttbr = INVALID_VTTBR;
     radix_tree_init(&p2m->mem_access_settings);
 
 err:
@@ -1397,23 +1402,63 @@ err:
     return rc;
 }
 
+static void p2m_teardown_altp2m(struct domain *d)
+{
+    unsigned int i;
+    struct p2m_domain *p2m;
+
+    for ( i = 0; i < MAX_ALTP2M; i++ )
+    {
+        if ( !d->arch.altp2m_p2m[i] )
+            continue;
+
+        p2m = d->arch.altp2m_p2m[i];
+        p2m_free_one(p2m);
+        xfree(p2m);
+
+        d->arch.altp2m_vttbr[i] = INVALID_VTTBR;
+        d->arch.altp2m_p2m[i] = NULL;
+    }
+
+    d->arch.altp2m_active = false;
+}
+
 static void p2m_teardown_hostp2m(struct domain *d)
 {
     struct p2m_domain *p2m = p2m_get_hostp2m(d);
 
+    d->arch.vttbr = INVALID_VTTBR;
     p2m_free_one(p2m);
 }
 
 void p2m_teardown(struct domain *d)
 {
+    if ( altp2m_enabled(d) )
+        p2m_teardown_altp2m(d);
+
     p2m_teardown_hostp2m(d);
+}
+
+static int p2m_init_altp2m(struct domain *d)
+{
+    unsigned int i;
+
+    spin_lock_init(&d->arch.altp2m_lock);
+
+    for ( i = 0; i < MAX_ALTP2M; i++ )
+    {
+        d->arch.altp2m_p2m[i] = NULL;
+        d->arch.altp2m_vttbr[i] = INVALID_VTTBR;
+    }
+
+    return 0;
 }
 
 static int p2m_init_hostp2m(struct domain *d)
 {
     struct p2m_domain *p2m = p2m_get_hostp2m(d);
 
-    d->arch.vttbr = 0;
+    d->arch.vttbr = INVALID_VTTBR;
     p2m->p2m_class = p2m_host;
 
     return p2m_init_one(d, p2m);
@@ -1421,7 +1466,16 @@ static int p2m_init_hostp2m(struct domain *d)
 
 int p2m_init(struct domain *d)
 {
-    return p2m_init_hostp2m(d);
+    int rc;
+
+    rc = p2m_init_hostp2m(d);
+    if ( rc )
+        return rc;
+
+    if ( altp2m_enabled(d) )
+        rc = p2m_init_altp2m(d);
+
+    return rc;
 }
 
 int relinquish_p2m_mapping(struct domain *d)

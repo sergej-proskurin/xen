@@ -21,6 +21,9 @@
 #define __ASM_ARM_ALTP2M_H
 
 #include <xen/sched.h>
+#include <public/hvm/params.h>
+
+#define altp2m_enabled(d) ((d)->arch.hvm_domain.params[HVM_PARAM_ALTP2M])
 
 /* Alternate p2m on/off per domain */
 static inline bool_t altp2m_active(const struct domain *d)

@@ -69,7 +69,7 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
     switch ( a.cmd )
     {
     case HVMOP_altp2m_get_domain_state:
-        if ( !d->arch.hvm_domain.params[HVM_PARAM_ALTP2M] )
+        if ( !altp2m_enabled(d) )
         {
             rc = -EINVAL;
             break;
