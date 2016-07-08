@@ -82,12 +82,14 @@ void dump_p2m_lookup(struct domain *d, paddr_t addr)
                  P2M_ROOT_LEVEL, P2M_ROOT_PAGES);
 }
 
-static void p2m_load_VTTBR(struct domain *d)
+static void p2m_load_VTTBR(struct domain *d, struct p2m_domain *p2m)
 {
+    uint64_t vttbr = p2m->vttbr.vttbr;
+
     if ( is_idle_domain(d) )
         return;
-    BUG_ON(d->arch.vttbr == INVALID_VTTBR);
-    WRITE_SYSREG64(d->arch.vttbr, VTTBR_EL2);
+    BUG_ON(vttbr == INVALID_VTTBR);
+    WRITE_SYSREG64(vttbr, VTTBR_EL2);
     isb(); /* Ensure update is visible */
 }
 
@@ -99,12 +101,20 @@ void p2m_save_state(struct vcpu *p)
 void p2m_restore_state(struct vcpu *n)
 {
     register_t hcr;
+    struct domain *d = n->domain;
+    struct p2m_domain *p2m;
 
     hcr = READ_SYSREG(HCR_EL2);
     WRITE_SYSREG(hcr & ~HCR_VM, HCR_EL2);
     isb();
 
-    p2m_load_VTTBR(n->domain);
+    if ( unlikely(altp2m_active(d)) )
+        p2m = p2m_get_altp2m(n);
+    else
+        p2m = p2m_get_hostp2m(d);
+
+    p2m_load_VTTBR(d, p2m);
+
     isb();
 
     if ( is_32bit_domain(n->domain) )
@@ -119,28 +129,49 @@ void p2m_restore_state(struct vcpu *n)
     isb();
 }
 
-void flush_tlb_domain(struct domain *d)
+
+static void flush_tlb_p2m(struct domain *d, struct p2m_domain *p2m)
 {
     unsigned long flags = 0;
+    struct p2m_domain *cur_p2m = NULL;
 
     /*
      * Update the VTTBR if necessary with the domain d. In this case,
      * it's only necessary to flush TLBs on every CPUs with the current VMID
      * (our domain).
      */
-    if ( d != current->domain )
+
+    if ( (d != current->domain) || unlikely(altp2m_active(d)) )
     {
+        /* Determine the currently active p2m table. */
+        if ( unlikely(altp2m_active(current->domain)) )
+            cur_p2m = p2m_get_altp2m(current);
+        else
+            cur_p2m = p2m_get_hostp2m(current->domain);
+
         local_irq_save(flags);
-        p2m_load_VTTBR(d);
+        p2m_load_VTTBR(d, p2m);
     }
 
     flush_tlb();
 
-    if ( d != current->domain )
+    if ( (d != current->domain) || unlikely(altp2m_active(d)) )
     {
-        p2m_load_VTTBR(current->domain);
+        p2m_load_VTTBR(current->domain, cur_p2m);
         local_irq_restore(flags);
     }
+}
+
+void flush_tlb_domain(struct domain *d)
+{
+    /*
+     * We cannot determine the active altp2m view without vcpu information. Use
+     * this function only if altp2m is not active.
+     */
+    if ( unlikely(altp2m_active(d)) )
+        return;
+
+    flush_tlb_p2m(d, p2m_get_hostp2m(d));
 }
 
 /*
@@ -1137,7 +1168,7 @@ static int apply_p2m_changes(struct domain *d,
 out:
     if ( flush )
     {
-        flush_tlb_domain(d);
+        flush_tlb_p2m(d, p2m);
         ret = iommu_iotlb_flush(d, gfn_x(sgfn), nr);
         if ( !rc )
             rc = ret;
@@ -1305,7 +1336,7 @@ int p2m_table_init(struct domain *d)
      * Make sure that all TLBs corresponding to the new VMID are flushed
      * before using it.
      */
-    flush_tlb_domain(d);
+    flush_tlb_p2m(d, p2m);
 
     spin_unlock(&p2m->lock);
 
@@ -1653,7 +1684,7 @@ struct page_info *get_page_from_gva(struct vcpu *v, vaddr_t va,
                                     unsigned long flags)
 {
     struct domain *d = v->domain;
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
     struct page_info *page = NULL;
     paddr_t maddr = 0;
     int rc;
@@ -2016,7 +2047,7 @@ static int p2m_init_altp2m_helper(struct domain *d, unsigned int idx)
      * Make sure that all TLBs corresponding to the new VMID are flushed
      * before using it.
      */
-    flush_tlb_domain(d);
+    flush_tlb_p2m(d, p2m);
 
     return rc;
 
@@ -2090,9 +2121,6 @@ void p2m_flush_altp2m(struct domain *d)
         p2m = d->arch.altp2m_p2m[i];
         p2m_flush_table(p2m);
 
-        /* Make sure to flush the TLBs of the associated VMID/altp2m view. */
-        flush_tlb_domain(d);
-
         d->arch.altp2m_vttbr[i] = INVALID_VTTBR;
     }
 
@@ -2126,8 +2154,6 @@ int p2m_destroy_altp2m_by_id(struct domain *d, unsigned int idx)
         {
             p2m_flush_table(p2m);
 
-            /* Make sure to flush the TLBs of the associated VMID/altp2m view. */
-            flush_tlb_domain(d);
             d->arch.altp2m_vttbr[idx] = INVALID_VTTBR;
             rc = 0;
         }
@@ -2152,7 +2178,7 @@ int p2m_switch_domain_altp2m_by_id(struct domain *d, unsigned int idx)
 
     altp2m_lock(d);
 
-    if ( d->arch.altp2m_vttbr[idx] != INVALID_MFN )
+    if ( d->arch.altp2m_vttbr[idx] != INVALID_VTTBR )
     {
         for_each_vcpu( d, v )
             if ( idx != vcpu_altp2m(v).p2midx )
