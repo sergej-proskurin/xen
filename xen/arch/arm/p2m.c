@@ -1366,23 +1366,45 @@ static void p2m_free_vmid(struct p2m_domain *p2m)
     spin_unlock(&vmid_alloc_lock);
 }
 
-static inline void p2m_free_one(struct p2m_domain *p2m)
+/* Reset this p2m table to be empty */
+static void p2m_flush_table(struct p2m_domain *p2m)
 {
-    struct page_info *pg;
+    struct page_info *top, *pg;
+    mfn_t mfn;
+    unsigned int i;
 
     spin_lock(&p2m->lock);
 
+    top = p2m->root;
+
+    /* Clear all concatenated first level pages */
+    for ( i = 0; i < P2M_ROOT_PAGES; i++ )
+    {
+        mfn = _mfn(page_to_mfn(top + i));
+        clear_domain_page(mfn);
+    }
+
+    /* Free the rest of the trie pages back to the paging pool */
     while ( (pg = page_list_remove_head(&p2m->pages)) )
         free_domheap_page(pg);
+
+    /* Free VMID and reset VTTBR */
+    p2m_free_vmid(p2m);
+    p2m->vttbr.vttbr = INVALID_VTTBR;
+
+    spin_unlock(&p2m->lock);
+}
+
+static inline void p2m_free_one(struct p2m_domain *p2m)
+{
+    p2m_flush_table(p2m);
+
+    spin_lock(&p2m->lock);
 
     if ( p2m->root )
         free_domheap_pages(p2m->root, P2M_ROOT_ORDER);
 
     p2m->root = NULL;
-
-    p2m->vttbr.vttbr = INVALID_VTTBR;
-
-    p2m_free_vmid(p2m);
 
     radix_tree_destroy(&p2m->mem_access_settings, NULL);
 
@@ -1424,6 +1446,8 @@ static void p2m_teardown_altp2m(struct domain *d)
     unsigned int i;
     struct p2m_domain *p2m;
 
+    altp2m_lock(d);
+
     for ( i = 0; i < MAX_ALTP2M; i++ )
     {
         if ( !d->arch.altp2m_p2m[i] )
@@ -1438,6 +1462,8 @@ static void p2m_teardown_altp2m(struct domain *d)
     }
 
     d->arch.altp2m_active = false;
+
+    altp2m_unlock(d);
 }
 
 static void p2m_teardown_hostp2m(struct domain *d)
@@ -1992,7 +2018,7 @@ err:
     if ( p2m )
         xfree(p2m);
 
-    p2m = NULL;
+    d->arch.altp2m_p2m[idx] = NULL;
 
     return rc;
 }
@@ -2012,6 +2038,27 @@ int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx)
     altp2m_unlock(d);
 
     return rc;
+}
+
+void p2m_flush_altp2m(struct domain *d)
+{
+    unsigned int i;
+    struct p2m_domain *p2m;
+
+    altp2m_lock(d);
+
+    for ( i = 0; i < MAX_ALTP2M; i++ )
+    {
+        if ( d->arch.altp2m_vttbr[i] == INVALID_VTTBR )
+            continue;
+
+        p2m = d->arch.altp2m_p2m[i];
+        p2m_flush_table(p2m);
+
+        d->arch.altp2m_vttbr[i] = INVALID_VTTBR;
+    }
+
+    altp2m_unlock(d);
 }
 
 /*
