@@ -115,7 +115,9 @@ void p2m_save_state(struct vcpu *p)
 void p2m_restore_state(struct vcpu *n)
 {
     register_t hcr;
-    struct p2m_domain *p2m = &n->domain->arch.p2m;
+    struct domain *d = n->domain;
+    struct p2m_domain *p2m = unlikely(altp2m_active(d)) ?
+                             p2m_get_altp2m(n) : p2m_get_hostp2m(d);
 
     if ( is_idle_vcpu(n) )
         return;
@@ -1156,7 +1158,7 @@ static int apply_p2m_changes(struct domain *d,
 out:
     if ( flush )
     {
-        p2m_flush_tlb(&d->arch.p2m);
+        p2m_flush_tlb(p2m);
         ret = iommu_iotlb_flush(d, gfn_x(sgfn), nr);
         if ( !rc )
             rc = ret;
@@ -1649,7 +1651,7 @@ struct page_info *get_page_from_gva(struct vcpu *v, vaddr_t va,
                                     unsigned long flags)
 {
     struct domain *d = v->domain;
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
     struct page_info *page = NULL;
     paddr_t maddr = 0;
     int rc;
@@ -2083,10 +2085,8 @@ void p2m_flush_altp2m(struct domain *d)
             continue;
 
         p2m = d->arch.altp2m_p2m[i];
-        p2m_flush_table(p2m);
-
-        /* Make sure to flush the TLBs of the associated VMID/altp2m view. */
         p2m_flush_tlb(p2m);
+        p2m_flush_table(p2m);
 
         d->arch.altp2m_vttbr[i] = INVALID_VTTBR;
     }
@@ -2119,10 +2119,9 @@ int p2m_destroy_altp2m_by_id(struct domain *d, unsigned int idx)
 
         if ( !_atomic_read(p2m->active_vcpus) )
         {
-            p2m_flush_table(p2m);
-
             /* Make sure to flush the TLBs of the associated VMID/altp2m view. */
             p2m_flush_tlb(p2m);
+            p2m_flush_table(p2m);
             d->arch.altp2m_vttbr[idx] = INVALID_VTTBR;
             rc = 0;
         }
@@ -2147,7 +2146,7 @@ int p2m_switch_domain_altp2m_by_id(struct domain *d, unsigned int idx)
 
     altp2m_lock(d);
 
-    if ( d->arch.altp2m_vttbr[idx] != INVALID_MFN )
+    if ( d->arch.altp2m_vttbr[idx] != INVALID_VTTBR )
     {
         for_each_vcpu( d, v )
             if ( idx != vcpu_altp2m(v).p2midx )
