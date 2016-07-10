@@ -590,6 +590,13 @@ enum p2m_operation {
     MEMACCESS,
 };
 
+static void p2m_flush_table(struct p2m_domain *p2m);
+static int apply_p2m_changes(struct domain *d, struct p2m_domain *p2m,
+                             enum p2m_operation op, paddr_t start_gpaddr,
+                             paddr_t end_gpaddr, paddr_t maddr,
+                             int mattr, uint32_t mask, p2m_type_t t,
+                             p2m_access_t a);
+
 /*
  * Put any references on the single 4K page referenced by pte.
  * TODO: Handle superpages, for now we only take special references for leaf
@@ -680,6 +687,80 @@ static int p2m_shatter_page(struct domain *d,
     }
 
     return rc;
+}
+
+static void p2m_reset_altp2m(struct p2m_domain *p2m)
+{
+    p2m_flush_table(p2m);
+    flush_tlb_p2m(p2m->domain, p2m);
+    p2m->lowest_mapped_gfn = INVALID_GFN;
+    p2m->max_mapped_gfn = _gfn(0);
+}
+
+static void p2m_altp2m_propagate_change(struct domain *d,
+                                        paddr_t start_gpa, paddr_t end_gpa,
+                                        paddr_t maddr, int mattr, uint32_t mask,
+                                        p2m_type_t p2mt, p2m_access_t p2ma)
+{
+    struct p2m_domain *p2m;
+    paddr_t m;
+    gfn_t gfn = _gfn(paddr_to_pfn(start_gpa));
+    unsigned int i;
+    unsigned int reset_count = 0;
+    unsigned int last_reset_idx = ~0;
+
+    if ( !altp2m_active(d) )
+        return;
+
+    altp2m_lock(d);
+
+    for ( i = 0; i < MAX_ALTP2M; i++ )
+    {
+        if ( d->arch.altp2m_vttbr[i] == INVALID_VTTBR )
+            continue;
+
+        p2m = d->arch.altp2m_p2m[i];
+
+        spin_lock(&p2m->lock);
+        m = __p2m_lookup(p2m, start_gpa, NULL);
+        spin_unlock(&p2m->lock);
+
+        /* Check for a dropped page that may impact this altp2m */
+        if ( maddr == INVALID_PADDR &&
+             gfn_x(gfn) >= p2m->lowest_mapped_gfn &&
+             gfn_x(gfn) <= p2m->max_mapped_gfn )
+        {
+            if ( !reset_count++ )
+            {
+                p2m_reset_altp2m(p2m);
+                last_reset_idx = i;
+            }
+            else
+            {
+                /* At least 2 altp2m's impacted, so reset everything */
+                for ( i = 0; i < MAX_ALTP2M; i++ )
+                {
+                    if ( i == last_reset_idx ||
+                         d->arch.altp2m_vttbr[i] == INVALID_VTTBR )
+                        continue;
+
+                    p2m = d->arch.altp2m_p2m[i];
+                    spin_lock(&p2m->lock);
+                    p2m_reset_altp2m(p2m);
+                    spin_unlock(&p2m->lock);
+                }
+
+                goto out;
+            }
+        }
+        else if ( m != INVALID_PADDR )
+            apply_p2m_changes(d, p2m, INSERT,
+                              start_gpa, end_gpa,
+                              maddr, mattr, mask, p2mt, p2ma);
+    }
+
+out:
+    altp2m_unlock(d);
 }
 
 /*
@@ -969,6 +1050,7 @@ static int apply_p2m_changes(struct domain *d,
     const bool_t preempt = !is_idle_vcpu(current);
     bool_t flush = false;
     bool_t flush_pt;
+    bool_t entry_written = false;
     PAGE_LIST_HEAD(free_pages);
     struct page_info *pg;
 
@@ -1089,6 +1171,7 @@ static int apply_p2m_changes(struct domain *d,
                                   &addr, &maddr, &flush,
                                   mattr, t, a);
             if ( ret < 0 ) { rc = ret ; goto out; }
+            if ( ret ) entry_written = 1;
             count += ret;
 
             if ( ret != P2M_ONE_PROGRESS_NOP )
@@ -1182,6 +1265,9 @@ out:
         if ( mappings[level] )
             unmap_domain_page(mappings[level]);
     }
+
+    if ( entry_written && p2m_is_hostp2m(p2m) )
+        p2m_altp2m_propagate_change(d, start_gpaddr, end_gpaddr, maddr, mask, mattr, t, a);
 
     spin_unlock(&p2m->lock);
 
