@@ -95,7 +95,7 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
 
         /* If the alternate p2m state has changed, handle appropriately */
         if ( (d->arch.altp2m_active != ostate) &&
-             (ostate || !(rc = p2m_init_altp2m_by_id(d, 0))) )
+             (ostate || !(rc = altp2m_init_by_id(d, 0))) )
         {
             for_each_vcpu( d, v )
             {
@@ -110,7 +110,7 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
              * flush all altp2m views -- including altp2m[0].
              */
             if ( ostate )
-                p2m_flush_altp2m(d);
+                altp2m_flush(d);
         }
         break;
     }
@@ -120,16 +120,16 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
         break;
 
     case HVMOP_altp2m_create_p2m:
-        if ( !(rc = p2m_init_next_altp2m(d, &a.u.view.view)) )
+        if ( !(rc = altp2m_init_next(d, &a.u.view.view)) )
             rc = __copy_to_guest(arg, &a, 1) ? -EFAULT : 0;
         break;
 
     case HVMOP_altp2m_destroy_p2m:
-        rc = p2m_destroy_altp2m_by_id(d, a.u.view.view);
+        rc = altp2m_destroy_by_id(d, a.u.view.view);
         break;
 
     case HVMOP_altp2m_switch_p2m:
-        rc = p2m_switch_domain_altp2m_by_id(d, a.u.view.view);
+        rc = altp2m_switch_domain_altp2m_by_id(d, a.u.view.view);
         break;
 
     case HVMOP_altp2m_set_mem_access:

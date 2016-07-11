@@ -2,6 +2,9 @@
 #define __ASM_ARM_FLUSHTLB_H__
 
 #include <xen/cpumask.h>
+/* TEST */
+struct p2m_domain;
+/* TEST END */
 
 /*
  * Filter the given set of CPUs, removing those that definitely flushed their
@@ -27,6 +30,7 @@ void flush_tlb_mask(const cpumask_t *mask);
 
 /* Flush CPU's TLBs for the specified domain */
 void flush_tlb_domain(struct domain *d);
+void flush_tlb_p2m(struct domain*d, struct p2m_domain *p2m);
 
 #endif /* __ASM_ARM_FLUSHTLB_H__ */
 /*

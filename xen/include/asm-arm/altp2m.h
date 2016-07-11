@@ -21,7 +21,8 @@
 #define __ASM_ARM_ALTP2M_H
 
 #include <xen/sched.h>
-#include <public/hvm/params.h>
+
+#define INVALID_ALTP2M    0xffff
 
 #define altp2m_lock(d)    spin_lock(&(d)->arch.altp2m_lock)
 #define altp2m_unlock(d)  spin_unlock(&(d)->arch.altp2m_lock)
@@ -40,8 +41,65 @@ static inline uint16_t altp2m_vcpu_idx(const struct vcpu *v)
     return vcpu_altp2m(v).p2midx;
 }
 
+int altp2m_init(struct domain *d);
+void altp2m_teardown(struct domain *d);
+
 void altp2m_vcpu_initialise(struct vcpu *v);
 void altp2m_vcpu_destroy(struct vcpu *v);
 void altp2m_vcpu_reset(struct vcpu *v);
+
+/* Get current alternate p2m table. */
+struct p2m_domain *altp2m_get_altp2m(struct vcpu *v);
+
+/* Switch alternate p2m for a single vcpu. */
+bool_t altp2m_switch_vcpu_altp2m_by_id(struct vcpu *v,
+                                       unsigned int idx);
+
+/* Switch alternate p2m for entire domain */
+int altp2m_switch_domain_altp2m_by_id(struct domain *d,
+                                      unsigned int idx);
+
+/* Make a specific alternate p2m valid. */
+int altp2m_init_by_id(struct domain *d,
+                      unsigned int idx);
+
+/* Find an available alternate p2m and make it valid */
+int altp2m_init_next(struct domain *d,
+                     uint16_t *idx);
+
+/* Flush all the alternate p2m's for a domain */
+void altp2m_flush(struct domain *d);
+
+/* Make a specific alternate p2m invalid */
+int altp2m_destroy_by_id(struct domain *d,
+                         unsigned int idx);
+
+/* Set memory access attributes of the gfn in the altp2m view. If the altp2m
+ * view does not contain the particular entry, copy it first from the hostp2m.
+ *
+ * Currently supports memory attribute adoptions of only one (4K) page. */
+int altp2m_set_mem_access(struct domain *d,
+                          struct p2m_domain *hp2m,
+                          struct p2m_domain *ap2m,
+                          p2m_access_t a,
+                          gfn_t gfn);
+
+/* Alternate p2m paging mechanism. */
+bool_t altp2m_lazy_copy(struct vcpu *v,
+                        paddr_t gpa,
+                        unsigned long gla,
+                        struct npfec npfec,
+                        struct p2m_domain **ap2m);
+
+/* Propagates changes made to hostp2m to affected altp2m views. */
+void altp2m_propagate_change(struct domain *d,
+                             gfn_t sgfn,
+                             unsigned long nr,
+                             mfn_t smfn,
+                             int mattr,
+                             uint32_t mask,
+                             p2m_type_t p2mt,
+                             p2m_access_t p2ma);
+
 
 #endif /* __ASM_ARM_ALTP2M_H */
