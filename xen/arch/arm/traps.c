@@ -2443,7 +2443,7 @@ static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
              * Copy the entire page of the failing instruction into the
              * currently active altp2m view.
              */
-            if ( p2m_altp2m_lazy_copy(v, gpa, gva, npfec, &p2m) )
+            if ( altp2m_lazy_copy(v, gpa, gva, npfec, &p2m) )
                 return;
 
             rc = p2m_mem_access_check(gpa, gva, npfec);
@@ -2524,7 +2524,7 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
              * Copy the entire page of the failing data access into the
              * currently active altp2m view.
              */
-            if ( p2m_altp2m_lazy_copy(v, info.gpa, info.gva, npfec, &p2m) )
+            if ( altp2m_lazy_copy(v, info.gpa, info.gva, npfec, &p2m) )
                 return;
 
             rc = p2m_mem_access_check(info.gpa, info.gva, npfec);

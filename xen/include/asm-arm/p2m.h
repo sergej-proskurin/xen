@@ -11,10 +11,8 @@
 
 #include <asm/atomic.h>
 
-#define MAX_ALTP2M      10      /* ARM might contain an arbitrary number of
+#define MAX_ALTP2M 10           /* ARM might contain an arbitrary number of
                                    altp2m views. */
-#define INVALID_ALTP2M  0xffff
-
 #define paddr_bits PADDR_BITS
 
 /* Holds the bit size of IPAs in p2m tables.  */
@@ -151,34 +149,9 @@ void p2m_mem_access_emulate_check(struct vcpu *v,
  * Alternate p2m: shadow p2m tables used for alternate memory views.
  */
 
-/* Get current alternate p2m table */
-struct p2m_domain *p2m_get_altp2m(struct vcpu *v);
-
-/* Switch alternate p2m for a single vcpu */
-bool_t p2m_switch_vcpu_altp2m_by_id(struct vcpu *v, unsigned int idx);
-
 /* Check to see if vcpu should be switched to a different p2m. */
 void p2m_altp2m_check(struct vcpu *v, uint16_t idx);
 
-/* Flush all the alternate p2m's for a domain */
-void p2m_flush_altp2m(struct domain *d);
-
-/* Make a specific alternate p2m valid */
-int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx);
-
-/* Alternate p2m paging */
-bool_t p2m_altp2m_lazy_copy(struct vcpu *v, paddr_t gpa,
-                            unsigned long gla, struct npfec npfec,
-                            struct p2m_domain **ap2m);
-
-/* Find an available alternate p2m and make it valid */
-int p2m_init_next_altp2m(struct domain *d, uint16_t *idx);
-
-/* Make a specific alternate p2m invalid */
-int p2m_destroy_altp2m_by_id(struct domain *d, unsigned int idx);
-
-/* Switch alternate p2m for entire domain */
-int p2m_switch_domain_altp2m_by_id(struct domain *d, unsigned int idx);
 
 /* Initialise vmid allocator */
 void p2m_vmid_allocator_init(void);
@@ -208,6 +181,22 @@ void p2m_dump_info(struct domain *d);
 
 /* Look up the MFN corresponding to a domain's GFN. */
 mfn_t p2m_lookup(struct domain *d, gfn_t gfn, p2m_type_t *t);
+
+/* Lookup the MFN, memory attributes, and page table level corresponding to a
+ * domain's GFN. */
+mfn_t p2m_lookup_attr(struct p2m_domain *p2m, gfn_t gfn, p2m_type_t *t,
+                      unsigned int *level, unsigned int *mattr,
+                      xenmem_access_t *xma);
+
+/* Modify an altp2m view's entry or its attributes. */
+int modify_altp2m_entry(struct domain *d, struct p2m_domain *p2m,
+                        paddr_t gpa, paddr_t maddr, unsigned int level,
+                        p2m_type_t t, p2m_access_t a);
+
+/* Modify an altp2m view's range of entries or their attributes. */
+int modify_altp2m_range(struct domain *d, struct p2m_domain *p2m,
+                        gfn_t sgfn, unsigned long nr, mfn_t smfn,
+                        uint32_t mask, p2m_type_t t, p2m_access_t a);
 
 /* Clean & invalidate caches corresponding to a region of guest address space */
 int p2m_cache_flush(struct domain *d, gfn_t start, unsigned long nr);
@@ -247,6 +236,18 @@ void guest_physmap_remove_page(struct domain *d,
                                mfn_t mfn, unsigned int page_order);
 
 mfn_t gfn_to_mfn(struct domain *d, gfn_t gfn);
+
+/* Allocates page table for a p2m. */
+int p2m_alloc_table(struct p2m_domain *p2m);
+
+/* Flushes the page table held by the p2m. */
+void p2m_flush_table(struct p2m_domain *p2m);
+
+/* Initialize the p2m structure. */
+int p2m_init_one(struct domain *d, struct p2m_domain *p2m);
+
+/* Release resources held by the p2m structure. */
+void p2m_free_one(struct p2m_domain *p2m);
 
 /*
  * Populate-on-demand
