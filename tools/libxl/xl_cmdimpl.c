@@ -1667,7 +1667,12 @@ static void parse_config_data(const char *config_source,
 
         xlu_cfg_get_defbool(config, "nestedhvm", &b_info->u.hvm.nested_hvm, 0);
 
-        xlu_cfg_get_defbool(config, "altp2mhvm", &b_info->u.hvm.altp2m, 0);
+        /* The config parameter "altp2mhvm" is considered deprecated, however
+         * further considered because of legacy reasons. The config parameter
+         * "altp2m" shall be used instead. */
+        if (!xlu_cfg_get_defbool(config, "altp2mhvm", &b_info->altp2m, 0))
+            fprintf(stderr, "WARNING: Specifying \"altp2mhvm\" is deprecated. "
+                    "Please use a \"altp2m\" instead.\n");
 
         xlu_cfg_replace_string(config, "smbios_firmware",
                                &b_info->u.hvm.smbios_firmware, 0);
@@ -1725,6 +1730,25 @@ static void parse_config_data(const char *config_source,
     }
     default:
         abort();
+    }
+
+    bool altp2m_support = false;
+#if defined(__i386__) || defined(__x86_64__)
+    /* Alternate p2m support on x86 is available only for HVM guests. */
+    if (b_info->type == LIBXL_DOMAIN_TYPE_HVM)
+        altp2m_support = true;
+#elif defined(__arm__) || defined(__aarch64__)
+    /* Alternate p2m support on ARM is available for all guests. */
+    altp2m_support = true;
+#endif
+
+    if (altp2m_support) {
+        /* The config parameter "altp2m" replaces the parameter "altp2mhvm".
+         * For legacy reasons, both parameters are accepted on x86 HVM guests
+         * (only "altp2m" is accepted on ARM guests). If both parameters are
+         * given, it must be considered that the config parameter "altp2m" will
+         * always have priority over "altp2mhvm". */
+        xlu_cfg_get_defbool(config, "altp2m", &b_info->altp2m, 0);
     }
 
     if (!xlu_cfg_get_list(config, "ioports", &ioports, &num_ioports, 0)) {
