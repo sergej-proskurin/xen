@@ -319,7 +319,6 @@ int libxl__domain_build_info_setdefault(libxl__gc *gc,
         libxl_defbool_setdefault(&b_info->u.hvm.hpet,               true);
         libxl_defbool_setdefault(&b_info->u.hvm.vpt_align,          true);
         libxl_defbool_setdefault(&b_info->u.hvm.nested_hvm,         false);
-        libxl_defbool_setdefault(&b_info->u.hvm.altp2m,             false);
         libxl_defbool_setdefault(&b_info->u.hvm.usb,                false);
         libxl_defbool_setdefault(&b_info->u.hvm.xen_platform_pci,   true);
 
@@ -406,6 +405,9 @@ int libxl__domain_build_info_setdefault(libxl__gc *gc,
             libxl_domain_type_to_string(b_info->type));
         return ERROR_INVAL;
     }
+
+    libxl_defbool_setdefault(&b_info->altp2m, false);
+
     return 0;
 }
 
@@ -902,8 +904,8 @@ static void initiate_domain_create(libxl__egc *egc,
 
     if (d_config->c_info.type == LIBXL_DOMAIN_TYPE_HVM &&
         (libxl_defbool_val(d_config->b_info.u.hvm.nested_hvm) &&
-         libxl_defbool_val(d_config->b_info.u.hvm.altp2m))) {
-        LOG(ERROR, "nestedhvm and altp2mhvm cannot be used together");
+         libxl_defbool_val(d_config->b_info.altp2m))) {
+        LOG(ERROR, "nestedhvm and altp2m cannot be used together");
         goto error_out;
     }
 
