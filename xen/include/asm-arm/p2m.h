@@ -188,6 +188,10 @@ mfn_t p2m_lookup_attr(struct p2m_domain *p2m, gfn_t gfn, p2m_type_t *t,
                       unsigned int *level, unsigned int *mattr,
                       xenmem_access_t *xma);
 
+/* Remove an altp2m view's entry. */
+int remove_altp2m_entry(struct domain *d, struct p2m_domain *p2m,
+                        paddr_t gpa, paddr_t maddr, unsigned int level);
+
 /* Modify an altp2m view's entry or its attributes. */
 int modify_altp2m_entry(struct domain *d, struct p2m_domain *p2m,
                         paddr_t gpa, paddr_t maddr, unsigned int level,
