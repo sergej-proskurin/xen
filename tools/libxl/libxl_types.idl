@@ -512,7 +512,6 @@ libxl_domain_build_info = Struct("domain_build_info",[
                                        ("mmio_hole_memkb",  MemKB),
                                        ("timer_mode",       libxl_timer_mode),
                                        ("nested_hvm",       libxl_defbool),
-                                       ("altp2m",           libxl_defbool),
                                        ("smbios_firmware",  string),
                                        ("acpi_firmware",    string),
                                        ("hdtype",           libxl_hdtype),
@@ -561,6 +560,9 @@ libxl_domain_build_info = Struct("domain_build_info",[
 
     ("arch_arm", Struct(None, [("gic_version", libxl_gic_version),
                               ])),
+    # Alternate p2m is not bound to any architecture or guest type, as it is
+    # supported by x86 HVM and ARM PV guests.
+    ("altp2m", libxl_defbool),
 
     ], dir=DIR_IN
 )
