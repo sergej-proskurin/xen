@@ -1268,6 +1268,17 @@ enabled by default and you should usually omit it. It may be necessary
 to disable the HPET in order to improve compatibility with guest
 Operating Systems (X86 only)
 
+=item B<altp2m=BOOLEAN>
+
+Enables or disables guest access to alternate-p2m capability.  Alternate-p2m
+allows a guest to manage multiple p2m guest physical "memory views" (as opposed
+to a single p2m). This option is disabled by default and is available to x86
+hvm and ARM domains.  You may want this option if you want to
+access-control/isolate access to specific guest physical memory pages accessed
+by the guest, e.g. for domain memory introspection or for
+isolation/access-control of memory between components within a single guest
+domain.
+
 =item B<altp2mhvm=BOOLEAN>
 
 Enables or disables hvm guest access to alternate-p2m capability.
@@ -1278,7 +1289,11 @@ You may want this option if you want to access-control/isolate
 access to specific guest physical memory pages accessed by
 the guest, e.g. for HVM domain memory introspection or
 for isolation/access-control of memory between components within
-a single guest hvm domain.
+a single guest hvm domain. This option is deprecated, use the option
+"altp2m" instead.
+
+Note: While the option "altp2mhvm" is deprecated, legacy applications for
+x86 systems will continue to work using it.
 
 =item B<nestedhvm=BOOLEAN>
 

@@ -1667,7 +1667,12 @@ static void parse_config_data(const char *config_source,
 
         xlu_cfg_get_defbool(config, "nestedhvm", &b_info->u.hvm.nested_hvm, 0);
 
-        xlu_cfg_get_defbool(config, "altp2mhvm", &b_info->u.hvm.altp2m, 0);
+        /* The config parameter "altp2mhvm" is considered deprecated, however
+         * further considered because of legacy reasons. The config parameter
+         * "altp2m" shall be used instead. */
+        if (!xlu_cfg_get_defbool(config, "altp2mhvm", &b_info->u.hvm.altp2m, 0))
+            fprintf(stderr, "WARNING: Specifying \"altp2mhvm\" is deprecated. "
+                    "Please use \"altp2m\" instead.\n");
 
         xlu_cfg_replace_string(config, "smbios_firmware",
                                &b_info->u.hvm.smbios_firmware, 0);
@@ -1726,6 +1731,8 @@ static void parse_config_data(const char *config_source,
     default:
         abort();
     }
+
+    xlu_cfg_get_defbool(config, "altp2m", &b_info->altp2m, 0);
 
     if (!xlu_cfg_get_list(config, "ioports", &ioports, &num_ioports, 0)) {
         b_info->num_ioports = num_ioports;
