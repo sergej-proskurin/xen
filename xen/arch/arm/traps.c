@@ -2494,6 +2494,7 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
 
 //    if ( hpfar_is_valid(hsr.iabt.s1ptw, fsc) )
     if ( hpfar_is_valid(dabt.s1ptw, fsc) )
+//    if ( dabt.s1ptw )
         info.gpa = get_faulting_ipa(info.gva);
     else
     {
@@ -2501,7 +2502,7 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
          * When using altp2m, this flush is required to get rid of old TLB
          * entries and use the new, lazily copied, ap2m entries.
          */
-//        flush_tlb_local();
+        flush_tlb_local();
 
         rc = gva_to_ipa(info.gva, &info.gpa, GV2M_READ);
         if ( rc == -EFAULT )
@@ -2511,6 +2512,7 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
     switch ( dabt.dfsc & ~FSC_LL_MASK )
     {
     case FSC_FLT_TRANS:
+    {
         if ( altp2m_active(current->domain) )
         {
             const struct npfec npfec = {
@@ -2529,11 +2531,20 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
 
             rc = p2m_mem_access_check(info.gpa, info.gva, npfec);
 
+/* TEST */
+//            gdprintk(XENLOG_DEBUG, "do_trap_data_abort_guest: 2 -- gva=%#"PRIvaddr
+//                     " gpa=%#"PRIpaddr" dabt.dfsc=%x\n", info.gva, info.gpa, dabt.dfsc);
+/* TEST END */
             /* Trap was triggered by mem_access, work here is done */
             if ( !rc )
                 return;
         }
 
+/* TEST */
+//        gdprintk(XENLOG_DEBUG, "do_trap_data_abort_guest: 3 -- gva=%#"PRIvaddr
+//                     " gpa=%#"PRIpaddr" dabt.dfsc=%x\n", info.gva, info.gpa, dabt.dfsc);
+/* TEST END */
+#if 0
         if ( dabt.s1ptw )
             goto bad_data_abort;
 
@@ -2561,7 +2572,9 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
             advance_pc(regs, hsr);
             return;
         }
+#endif
         break;
+    }
     case FSC_FLT_PERM:
     {
         const struct npfec npfec = {
@@ -2576,6 +2589,12 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
         /* Trap was triggered by mem_access, work here is done */
         if ( !rc )
             return;
+
+/* TEST */
+//        gdprintk(XENLOG_DEBUG, "do_trap_data_abort_guest: 3 -- gva=%#"PRIvaddr
+//                     " gpa=%#"PRIpaddr" dabt.dfsc=%x RC=%d\n", info.gva, info.gpa, dabt.dfsc, rc);
+/* TEST END */
+
         break;
     }
     default:
@@ -2583,9 +2602,49 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
                 hsr.bits, dabt.dfsc);
     }
 
+/* TEST */
+        if ( dabt.s1ptw )
+            goto bad_data_abort;
+
+        /* XXX: Decode the instruction if ISS is not valid */
+        if ( !dabt.valid )
+            goto bad_data_abort;
+
+/* TEST */
+//    gdprintk(XENLOG_DEBUG, "do_trap_data_abort_guest: 4 dabt.dfsc=%x\n", dabt.dfsc);
+/* TEST END */
+
+        /*
+         * Erratum 766422: Thumb store translation fault to Hypervisor may
+         * not have correct HSR Rt value.
+         */
+        if ( check_workaround_766422() && (regs->cpsr & PSR_THUMB) &&
+             dabt.write )
+        {
+            rc = decode_instruction(regs, &info.dabt);
+            if ( rc )
+            {
+                gprintk(XENLOG_DEBUG, "Unable to decode instruction\n");
+                goto bad_data_abort;
+            }
+        }
+
+        if ( handle_mmio(&info) )
+        {
+            advance_pc(regs, hsr);
+            return;
+        }
+/* TEST END */
+
+/* TEST */
+//    gdprintk(XENLOG_DEBUG, "do_trap_data_abort_guest dabt.dfsc=%x: end\n", dabt.dfsc);
+/* TEST END */
 bad_data_abort:
     gdprintk(XENLOG_DEBUG, "HSR=0x%x pc=%#"PRIregister" gva=%#"PRIvaddr
              " gpa=%#"PRIpaddr"\n", hsr.bits, regs->pc, info.gva, info.gpa);
+/* TEST */
+    dump_p2m_lookup(current->domain, info.gpa);
+/* TEST END */
     inject_dabt_exception(regs, info.gva, hsr.len);
 }
 
