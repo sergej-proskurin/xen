@@ -1279,7 +1279,7 @@ int map_regions_rw_cache(struct domain *d,
                          mfn_t mfn)
 {
     return p2m_insert_mapping(d, p2m_get_hostp2m(d), gfn, nr, mfn,
-                              p2m_mmio_direct_nc);
+                              p2m_mmio_direct_c);
 }
 
 int unmap_regions_rw_cache(struct domain *d,
@@ -1537,8 +1537,6 @@ int p2m_init_one(struct domain *d, struct p2m_domain *p2m)
     p2m->vttbr.vttbr = INVALID_VTTBR;
     radix_tree_init(&p2m->mem_access_settings);
 
-    rc = p2m_table_init(d);
-
     return rc;
 }
 
@@ -1551,18 +1549,24 @@ static void p2m_teardown_hostp2m(struct domain *d)
 
 void p2m_teardown(struct domain *d)
 {
-    altp2m_teardown(d);
+    if ( altp2m_enabled(d) )
+        altp2m_teardown(d);
 
     p2m_teardown_hostp2m(d);
 }
 
 static int p2m_init_hostp2m(struct domain *d)
 {
+    int rc;
     struct p2m_domain *p2m = p2m_get_hostp2m(d);
 
     p2m->p2m_class = p2m_host;
 
-    return p2m_init_one(d, p2m);
+    rc = p2m_init_one(d, p2m);
+    if ( rc )
+        return rc;
+
+    return p2m_table_init(d);
 }
 
 int p2m_init(struct domain *d)
@@ -1573,7 +1577,10 @@ int p2m_init(struct domain *d)
     if ( rc )
         return rc;
 
-    return altp2m_init(d);
+    if ( altp2m_enabled(d) )
+        rc = altp2m_init(d);
+
+    return rc;
 }
 
 int relinquish_p2m_mapping(struct domain *d)
@@ -1720,7 +1727,34 @@ struct page_info *get_page_from_gva(struct vcpu *v, vaddr_t va,
 
     p2m_read_lock(p2m);
 
-    rc = gvirt_to_maddr(va, &maddr, flags);
+    /*
+     * If altp2m is active, we still read the gva from the hostp2m, as it
+     * contains all valid mappings while the currently active altp2m view might
+     * not have the required gva mapped yet.
+     */
+    if ( unlikely(altp2m_active(d)) )
+    {
+        unsigned long irq_flags = 0;
+        uint64_t ovttbr = READ_SYSREG64(VTTBR_EL2);
+
+        if ( ovttbr != p2m->vttbr.vttbr )
+        {
+            local_irq_save(irq_flags);
+            WRITE_SYSREG64(p2m->vttbr.vttbr, VTTBR_EL2);
+            isb();
+        }
+
+        rc = gvirt_to_maddr(va, &maddr, flags);
+
+        if ( ovttbr != p2m->vttbr.vttbr )
+        {
+            WRITE_SYSREG64(ovttbr, VTTBR_EL2);
+            isb();
+            local_irq_restore(irq_flags);
+        }
+    }
+    else
+        rc = gvirt_to_maddr(va, &maddr, flags);
 
     if ( rc )
         goto err;

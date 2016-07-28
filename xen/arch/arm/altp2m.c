@@ -313,7 +313,7 @@ int altp2m_change_gfn(struct domain *d,
     mfn_t mfn;
     xenmem_access_t xma;
     p2m_type_t p2mt;
-    unsigned int level, mattr;
+    unsigned int level;
     int rc = -EINVAL;
 
     static const p2m_access_t memaccess[] = {
@@ -339,6 +339,12 @@ int altp2m_change_gfn(struct domain *d,
 
     altp2m_lock(d);
 
+    /*
+     * Flip mem_access_enabled to true when a permission is set, as to prevent
+     * allocating or inserting super-pages.
+     */
+    ap2m->mem_access_enabled = true;
+
     mfn = p2m_lookup_attr(ap2m, old_gfn, &p2mt, &level, NULL, NULL);
 
     /* Check whether the page needs to be reset. */
@@ -362,8 +368,7 @@ int altp2m_change_gfn(struct domain *d,
     /* Check host p2m if no valid entry in altp2m present. */
     if ( mfn_eq(mfn, INVALID_MFN) )
     {
-        mfn = p2m_lookup_attr(hp2m, old_gfn, &p2mt, &level, &mattr, &xma);
-
+        mfn = p2m_lookup_attr(hp2m, old_gfn, &p2mt, &level, NULL, &xma);
         if ( mfn_eq(mfn, INVALID_MFN) || (p2mt != p2m_ram_rw) )
         {
             rc = -EINVAL;
@@ -374,7 +379,7 @@ int altp2m_change_gfn(struct domain *d,
         if ( level != 3 )
         {
             rc = modify_altp2m_entry(d, ap2m, old_gpa, pfn_to_paddr(mfn_x(mfn)),
-                                     level, mattr, p2mt, memaccess[xma]);
+                                     level, p2mt, memaccess[xma]);
             if ( rc )
             {
                 rc = -EINVAL;
@@ -383,11 +388,11 @@ int altp2m_change_gfn(struct domain *d,
         }
     }
 
-    mfn = p2m_lookup_attr(ap2m, new_gfn, &p2mt, &level, &mattr, &xma);
+    mfn = p2m_lookup_attr(ap2m, new_gfn, &p2mt, &level, NULL, &xma);
 
     /* If new_gfn is not part of altp2m, get the mapping information from hp2m */
     if ( mfn_eq(mfn, INVALID_MFN) )
-        mfn = p2m_lookup_attr(hp2m, new_gfn, &p2mt, &level, &mattr, &xma);
+        mfn = p2m_lookup_attr(hp2m, new_gfn, &p2mt, &level, NULL, &xma);
 
     if ( mfn_eq(mfn, INVALID_MFN) || (p2mt != p2m_ram_rw) )
     {
@@ -395,8 +400,10 @@ int altp2m_change_gfn(struct domain *d,
         goto out;
     }
 
+    /* Set mem access attributes - currently supporting only one (4K) page. */
+    level = 3;
     rc = modify_altp2m_entry(d, ap2m, old_gpa, pfn_to_paddr(mfn_x(mfn)),
-                             level, mattr, p2mt, memaccess[xma]);
+                             level, p2mt, memaccess[xma]);
     if ( rc )
     {
         rc = -EINVAL;
