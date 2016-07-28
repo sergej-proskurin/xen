@@ -1438,9 +1438,9 @@ int p2m_table_init(struct domain *d)
      */
     flush_tlb_p2m(d, p2m);
 
+out:
     spin_unlock(&p2m->lock);
 
-out:
     return rc;
 }
 
@@ -1550,7 +1550,7 @@ int p2m_init_one(struct domain *d, struct p2m_domain *p2m)
     spin_lock(&p2m->lock);
 
     /* Reused altp2m views keep ther VMID. */
-    if ( p2m->vmid != INVALID_VMID )
+    if ( p2m->vmid == INVALID_VMID )
     {
         rc = p2m_alloc_vmid(d, p2m);
         if ( rc != 0 )
@@ -1583,7 +1583,8 @@ static void p2m_teardown_hostp2m(struct domain *d)
 
 void p2m_teardown(struct domain *d)
 {
-    altp2m_teardown(d);
+    if ( altp2m_enabled(d) )
+        altp2m_teardown(d);
 
     p2m_teardown_hostp2m(d);
 }
@@ -1606,7 +1607,10 @@ int p2m_init(struct domain *d)
     if ( rc )
         return rc;
 
-    return altp2m_init(d);
+    if ( altp2m_enabled(d) )
+        rc = altp2m_init(d);
+
+    return rc;
 }
 
 int relinquish_p2m_mapping(struct domain *d)

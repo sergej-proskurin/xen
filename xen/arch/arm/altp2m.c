@@ -340,6 +340,12 @@ int altp2m_change_gfn(struct domain *d,
 
     altp2m_lock(d);
 
+    /*
+     * Flip mem_access_enabled to true when a permission is set, as to prevent
+     * allocating or inserting super-pages.
+     */
+    ap2m->mem_access_enabled = true;
+
     mfn = p2m_lookup_attr(ap2m, old_gfn, &p2mt, &level, NULL, NULL);
 
     /* Check whether the page needs to be reset. */
@@ -364,7 +370,6 @@ int altp2m_change_gfn(struct domain *d,
     if ( mfn_eq(mfn, INVALID_MFN) )
     {
         mfn = p2m_lookup_attr(hp2m, old_gfn, &p2mt, &level, &mattr, &xma);
-
         if ( mfn_eq(mfn, INVALID_MFN) || (p2mt != p2m_ram_rw) )
         {
             rc = -EINVAL;
@@ -396,6 +401,8 @@ int altp2m_change_gfn(struct domain *d,
         goto out;
     }
 
+    /* Set mem access attributes - currently supporting only one (4K) page. */
+    level = 3;
     rc = modify_altp2m_entry(d, ap2m, old_gpa, pfn_to_paddr(mfn_x(mfn)),
                              level, mattr, p2mt, memaccess[xma]);
     if ( rc )
