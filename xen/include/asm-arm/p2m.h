@@ -33,7 +33,7 @@ struct p2m_domain {
     uint8_t vmid;
 
     /* Current Translation Table Base Register for the p2m */
-    uint64_t vttbr;
+    struct vttbr vttbr;
 
     /*
      * Highest guest frame that's ever been mapped in the p2m

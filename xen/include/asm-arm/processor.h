@@ -529,6 +529,22 @@ union hsr {
 
 
 };
+
+/* VTTBR: Virtualization Translation Table Base Register */
+struct vttbr {
+    union {
+        struct {
+            u64 baddr :40, /* variable res0: from 0-(x-1) bit */
+                res1  :8,
+                vmid  :8,
+                res2  :8;
+        };
+        u64 vttbr;
+    };
+};
+
+#define INVALID_VTTBR (0UL)
+
 #endif
 
 /* HSR.EC == HSR_CP{15,14,10}_32 */
