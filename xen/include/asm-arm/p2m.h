@@ -9,6 +9,8 @@
 #include <xen/p2m-common.h>
 #include <public/memory.h>
 
+#define MAX_ALTP2M 10           /* ARM might contain an arbitrary number of
+                                   altp2m views. */
 #define paddr_bits PADDR_BITS
 
 /* Holds the bit size of IPAs in p2m tables.  */
@@ -211,6 +213,9 @@ void guest_physmap_remove_page(struct domain *d,
                                mfn_t mfn, unsigned int page_order);
 
 mfn_t gfn_to_mfn(struct domain *d, gfn_t gfn);
+
+/* Release resources held by the p2m structure. */
+void p2m_free_one(struct p2m_domain *p2m);
 
 /*
  * Populate-on-demand

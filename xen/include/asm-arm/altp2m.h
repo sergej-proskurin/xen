@@ -22,6 +22,9 @@
 
 #include <xen/sched.h>
 
+#define altp2m_lock(d)    spin_lock(&(d)->arch.altp2m_lock)
+#define altp2m_unlock(d)  spin_unlock(&(d)->arch.altp2m_lock)
+
 #define altp2m_enabled(d) ((d)->arch.hvm_domain.params[HVM_PARAM_ALTP2M])
 
 /* Alternate p2m on/off per domain */
@@ -37,5 +40,8 @@ static inline uint16_t altp2m_vcpu_idx(const struct vcpu *v)
     BUG();
     return 0;
 }
+
+int altp2m_init(struct domain *d);
+void altp2m_teardown(struct domain *d);
 
 #endif /* __ASM_ARM_ALTP2M_H */
