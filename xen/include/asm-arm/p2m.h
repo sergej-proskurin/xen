@@ -10,6 +10,8 @@
 #include <xen/p2m-common.h>
 #include <public/memory.h>
 
+#define MAX_ALTP2M 10           /* ARM might contain an arbitrary number of
+                                   altp2m views. */
 #define paddr_bits PADDR_BITS
 
 #define p2m_switch_vttbr_and_get_flags(ovttbr, nvttbr, flags)       \
