@@ -122,7 +122,7 @@ void p2m_restore_state(struct vcpu *n)
     WRITE_SYSREG(hcr & ~HCR_VM, HCR_EL2);
     isb();
 
-    WRITE_SYSREG64(p2m->vttbr, VTTBR_EL2);
+    WRITE_SYSREG64(p2m->vttbr.vttbr, VTTBR_EL2);
     isb();
 
     if ( is_32bit_domain(n->domain) )
@@ -147,10 +147,10 @@ static void p2m_flush_tlb(struct p2m_domain *p2m)
      * VMID. So switch to the VTTBR of a given P2M if different.
      */
     ovttbr = READ_SYSREG64(VTTBR_EL2);
-    if ( ovttbr != p2m->vttbr )
+    if ( ovttbr != p2m->vttbr.vttbr )
     {
         local_irq_save(flags);
-        WRITE_SYSREG64(p2m->vttbr, VTTBR_EL2);
+        WRITE_SYSREG64(p2m->vttbr.vttbr, VTTBR_EL2);
         isb();
     }
 
@@ -1293,7 +1293,7 @@ static int p2m_alloc_table(struct domain *d)
 
     p2m->root = page;
 
-    p2m->vttbr = page_to_maddr(p2m->root) | ((uint64_t)p2m->vmid & 0xff) << 48;
+    p2m->vttbr.vttbr = page_to_maddr(p2m->root) | ((uint64_t)p2m->vmid & 0xff) << 48;
 
     /*
      * Make sure that all TLBs corresponding to the new VMID are flushed
