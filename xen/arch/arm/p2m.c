@@ -14,6 +14,8 @@
 #include <asm/hardirq.h>
 #include <asm/page.h>
 
+#include <asm/altp2m.h>
+
 #ifdef CONFIG_ARM_64
 static unsigned int __read_mostly p2m_root_order;
 static unsigned int __read_mostly p2m_root_level;
@@ -1392,7 +1394,7 @@ void p2m_flush_table(struct p2m_domain *p2m)
         free_domheap_page(pg);
 }
 
-static inline void p2m_free_one(struct p2m_domain *p2m)
+void p2m_free_one(struct p2m_domain *p2m)
 {
     p2m_flush_table(p2m);
 
@@ -1415,9 +1417,13 @@ int p2m_init_one(struct domain *d, struct p2m_domain *p2m)
     rwlock_init(&p2m->lock);
     INIT_PAGE_LIST_HEAD(&p2m->pages);
 
-    rc = p2m_alloc_vmid(p2m);
-    if ( rc != 0 )
-        return rc;
+    /* Reused altp2m views keep their VMID. */
+    if ( p2m->vmid == INVALID_VMID )
+    {
+        rc = p2m_alloc_vmid(p2m);
+        if ( rc != 0 )
+            return rc;
+    }
 
     p2m->domain = d;
     p2m->access_required = false;
@@ -1441,6 +1447,9 @@ static void p2m_teardown_hostp2m(struct domain *d)
 
 void p2m_teardown(struct domain *d)
 {
+    if ( altp2m_enabled(d) )
+        altp2m_teardown(d);
+
     p2m_teardown_hostp2m(d);
 }
 
@@ -1460,7 +1469,16 @@ static int p2m_init_hostp2m(struct domain *d)
 
 int p2m_init(struct domain *d)
 {
-    return p2m_init_hostp2m(d);
+    int rc;
+
+    rc = p2m_init_hostp2m(d);
+    if ( rc )
+        return rc;
+
+    if ( altp2m_enabled(d) )
+        rc = altp2m_init(d);
+
+    return rc;
 }
 
 int relinquish_p2m_mapping(struct domain *d)
