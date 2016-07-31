@@ -127,8 +127,14 @@ struct arch_domain
     paddr_t efi_acpi_len;
 #endif
 
+    /*
+     * Lock that protects access to altp2m related fields in both struct
+     * arch_domain and struct p2m_domain.
+     */
+    spinlock_t altp2m_lock;
     /* altp2m: allow multiple copies of host p2m */
     bool_t altp2m_active;
+    struct p2m_domain *altp2m_p2m[MAX_ALTP2M];
 }  __cacheline_aligned;
 
 struct arch_vcpu
