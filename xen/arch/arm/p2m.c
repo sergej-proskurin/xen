@@ -1321,6 +1321,20 @@ void guest_physmap_remove_page(struct domain *d,
     p2m_remove_mapping(d, p2m_get_hostp2m(d), gfn, (1 << page_order), mfn);
 }
 
+int remove_altp2m_entry(struct domain *d, struct p2m_domain *ap2m,
+                        paddr_t gpa, paddr_t maddr, unsigned int level)
+{
+    paddr_t size = level_sizes[level];
+    paddr_t mask = level_masks[level];
+    gfn_t gfn = _gfn(paddr_to_pfn(gpa & mask));
+    mfn_t mfn = _mfn(paddr_to_pfn(maddr & mask));
+    unsigned long nr = paddr_to_pfn(size);
+
+    ASSERT(p2m_is_altp2m(ap2m));
+
+    return p2m_remove_mapping(d, ap2m, gfn, nr, mfn);
+}
+
 int modify_altp2m_entry(struct domain *d, struct p2m_domain *ap2m,
                         paddr_t gpa, paddr_t maddr, unsigned int level,
                         p2m_type_t t, p2m_access_t a)

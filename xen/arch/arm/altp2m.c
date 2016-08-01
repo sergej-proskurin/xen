@@ -294,6 +294,122 @@ out:
     altp2m_unlock(d);
 }
 
+int altp2m_change_gfn(struct domain *d,
+                      unsigned int idx,
+                      gfn_t old_gfn,
+                      gfn_t new_gfn)
+{
+    struct p2m_domain *hp2m, *ap2m;
+    paddr_t old_gpa = pfn_to_paddr(gfn_x(old_gfn));
+    mfn_t mfn;
+    xenmem_access_t xma;
+    p2m_type_t p2mt;
+    unsigned int level;
+    int rc = -EINVAL;
+
+    static const p2m_access_t memaccess[] = {
+#define ACCESS(ac) [XENMEM_access_##ac] = p2m_access_##ac
+        ACCESS(n),
+        ACCESS(r),
+        ACCESS(w),
+        ACCESS(rw),
+        ACCESS(x),
+        ACCESS(rx),
+        ACCESS(wx),
+        ACCESS(rwx),
+        ACCESS(rx2rw),
+        ACCESS(n2rwx),
+#undef ACCESS
+    };
+
+    if ( idx >= MAX_ALTP2M || d->arch.altp2m_vttbr[idx] == INVALID_VTTBR )
+        return rc;
+
+    hp2m = p2m_get_hostp2m(d);
+    ap2m = d->arch.altp2m_p2m[idx];
+
+    altp2m_lock(d);
+
+    /*
+     * Flip mem_access_enabled to true when a permission is set, as to prevent
+     * allocating or inserting super-pages.
+     */
+    ap2m->mem_access_enabled = true;
+
+    mfn = p2m_lookup_attr(ap2m, old_gfn, &p2mt, &level, NULL, NULL);
+
+    /* Check whether the page needs to be reset. */
+    if ( gfn_eq(new_gfn, INVALID_GFN) )
+    {
+        /* If mfn is mapped by old_gpa, remove old_gpa from the altp2m table. */
+        if ( !mfn_eq(mfn, INVALID_MFN) )
+        {
+            rc = remove_altp2m_entry(d, ap2m, old_gpa, pfn_to_paddr(mfn_x(mfn)), level);
+            if ( rc )
+            {
+                rc = -EINVAL;
+                goto out;
+            }
+        }
+
+        rc = 0;
+        goto out;
+    }
+
+    /* Check host p2m if no valid entry in altp2m present. */
+    if ( mfn_eq(mfn, INVALID_MFN) )
+    {
+        mfn = p2m_lookup_attr(hp2m, old_gfn, &p2mt, &level, NULL, &xma);
+        if ( mfn_eq(mfn, INVALID_MFN) || (p2mt != p2m_ram_rw) )
+        {
+            rc = -EINVAL;
+            goto out;
+        }
+
+        /* If this is a superpage, copy that first. */
+        if ( level != 3 )
+        {
+            rc = modify_altp2m_entry(d, ap2m, old_gpa, pfn_to_paddr(mfn_x(mfn)),
+                                     level, p2mt, memaccess[xma]);
+            if ( rc )
+            {
+                rc = -EINVAL;
+                goto out;
+            }
+        }
+    }
+
+    mfn = p2m_lookup_attr(ap2m, new_gfn, &p2mt, &level, NULL, &xma);
+
+    /* If new_gfn is not part of altp2m, get the mapping information from hp2m */
+    if ( mfn_eq(mfn, INVALID_MFN) )
+        mfn = p2m_lookup_attr(hp2m, new_gfn, &p2mt, &level, NULL, &xma);
+
+    if ( mfn_eq(mfn, INVALID_MFN) || (p2mt != p2m_ram_rw) )
+    {
+        rc = -EINVAL;
+        goto out;
+    }
+
+    /* Set mem access attributes - currently supporting only one (4K) page. */
+    level = 3;
+    rc = modify_altp2m_entry(d, ap2m, old_gpa, pfn_to_paddr(mfn_x(mfn)),
+                             level, p2mt, memaccess[xma]);
+    if ( rc )
+    {
+        rc = -EINVAL;
+        goto out;
+    }
+
+    rc = 0;
+
+out:
+    altp2m_unlock(d);
+
+    return rc;
+}
+
+
 static void altp2m_vcpu_reset(struct vcpu *v)
 {
     struct altp2mvcpu *av = &vcpu_altp2m(v);
