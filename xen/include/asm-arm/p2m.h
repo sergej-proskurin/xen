@@ -9,6 +9,8 @@
 #include <xen/p2m-common.h>
 #include <public/memory.h>
 
+#include <asm/atomic.h>
+
 #define MAX_ALTP2M 10           /* ARM might contain an arbitrary number of
                                    altp2m views. */
 #define paddr_bits PADDR_BITS
@@ -85,6 +87,9 @@ struct p2m_domain {
      * enough available bits to store this information.
      */
     struct radix_tree_root mem_access_settings;
+
+    /* Alternate p2m: count of vcpu's currently using this p2m. */
+    atomic_t active_vcpus;
 
     /* Choose between: host/alternate */
     p2m_class_t p2m_class;
@@ -213,6 +218,12 @@ void guest_physmap_remove_page(struct domain *d,
                                mfn_t mfn, unsigned int page_order);
 
 mfn_t gfn_to_mfn(struct domain *d, gfn_t gfn);
+
+/* Allocates page table for a p2m. */
+int p2m_alloc_table(struct p2m_domain *p2m);
+
+/* Initialize the p2m structure. */
+int p2m_init_one(struct domain *d, struct p2m_domain *p2m);
 
 /* Release resources held by the p2m structure. */
 void p2m_free_one(struct p2m_domain *p2m);
