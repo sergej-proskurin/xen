@@ -54,9 +54,6 @@ int altp2m_init_by_id(struct domain *d,
                       unsigned int idx);
 
 /* Flush all the alternate p2m's for a domain */
-static inline void altp2m_flush(struct domain *d)
-{
-    /* Not yet implemented. */
-}
+void altp2m_flush(struct domain *d);
 
 #endif /* __ASM_ARM_ALTP2M_H */
