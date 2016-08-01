@@ -1812,6 +1812,12 @@ void __init setup_virt_paging(void)
     smp_call_function(setup_virt_paging_one, (void *)val, 1);
 }
 
+void p2m_altp2m_check(struct vcpu *v, uint16_t idx)
+{
+    if ( altp2m_active(v->domain) )
+        altp2m_switch_vcpu_altp2m_by_id(v, idx);
+}
+
 bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
 {
     int rc;
