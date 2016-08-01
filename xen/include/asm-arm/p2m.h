@@ -180,6 +180,17 @@ void p2m_dump_info(struct domain *d);
 /* Look up the MFN corresponding to a domain's GFN. */
 mfn_t p2m_lookup(struct domain *d, gfn_t gfn, p2m_type_t *t);
 
+/* Lookup the MFN, memory attributes, and page table level corresponding to a
+ * domain's GFN. */
+mfn_t p2m_lookup_attr(struct p2m_domain *p2m, gfn_t gfn, p2m_type_t *t,
+                      unsigned int *level, unsigned int *mattr,
+                      xenmem_access_t *xma);
+
+/* Modify an altp2m view's entry or its attributes. */
+int modify_altp2m_entry(struct domain *d, struct p2m_domain *p2m,
+                        paddr_t gpa, paddr_t maddr, unsigned int level,
+                        p2m_type_t t, p2m_access_t a);
+
 /* Clean & invalidate caches corresponding to a region of guest address space */
 int p2m_cache_flush(struct domain *d, gfn_t start, unsigned long nr);
 
@@ -302,6 +313,16 @@ static inline int get_page_and_type(struct page_info *page,
 
 /* get host p2m table */
 #define p2m_get_hostp2m(d) (&(d)->arch.p2m)
+
+static inline bool_t p2m_is_hostp2m(const struct p2m_domain *p2m)
+{
+    return p2m->p2m_class == p2m_host;
+}
+
+static inline bool_t p2m_is_altp2m(const struct p2m_domain *p2m)
+{
+    return p2m->p2m_class == p2m_alternate;
+}
 
 /* vm_event and mem_access are supported on any ARM guest */
 static inline bool_t p2m_mem_access_sanity_check(struct domain *d)

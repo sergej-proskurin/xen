@@ -65,6 +65,74 @@ int altp2m_switch_domain_altp2m_by_id(struct domain *d, unsigned int idx)
     return rc;
 }
 
+int altp2m_set_mem_access(struct domain *d,
+                          struct p2m_domain *hp2m,
+                          struct p2m_domain *ap2m,
+                          p2m_access_t a,
+                          gfn_t gfn)
+{
+    p2m_type_t p2mt;
+    xenmem_access_t xma_old;
+    paddr_t gpa = pfn_to_paddr(gfn_x(gfn));
+    mfn_t mfn;
+    unsigned int level;
+    int rc;
+
+    static const p2m_access_t memaccess[] = {
+#define ACCESS(ac) [XENMEM_access_##ac] = p2m_access_##ac
+        ACCESS(n),
+        ACCESS(r),
+        ACCESS(w),
+        ACCESS(rw),
+        ACCESS(x),
+        ACCESS(rx),
+        ACCESS(wx),
+        ACCESS(rwx),
+        ACCESS(rx2rw),
+        ACCESS(n2rwx),
+#undef ACCESS
+    };
+
+    altp2m_lock(d);
+
+    /* Check if entry is part of the altp2m view. */
+    mfn = p2m_lookup_attr(ap2m, gfn, &p2mt, &level, NULL, NULL);
+
+    /* Check host p2m if no valid entry in ap2m. */
+    if ( mfn_eq(mfn, INVALID_MFN) )
+    {
+        /* Check if entry is part of the host p2m view. */
+        mfn = p2m_lookup_attr(hp2m, gfn, &p2mt, &level, NULL, &xma_old);
+        if ( mfn_eq(mfn, INVALID_MFN) || p2mt != p2m_ram_rw )
+        {
+            rc = -ESRCH;
+            goto out;
+        }
+
+        /* If this is a superpage, copy that first. */
+        if ( level != 3 )
+        {
+            rc = modify_altp2m_entry(d, ap2m, gpa, pfn_to_paddr(mfn_x(mfn)),
+                                     level, p2mt, memaccess[xma_old]);
+            if ( rc < 0 )
+            {
+                rc = -ESRCH;
+                goto out;
+            }
+        }
+    }
+
+    /* Set mem access attributes - currently supporting only one (4K) page. */
+    level = 3;
+    rc = modify_altp2m_entry(d, ap2m, gpa, pfn_to_paddr(mfn_x(mfn)),
+                             level, p2mt, a);
+
+out:
+    altp2m_unlock(d);
+
+    return rc;
+}
+
 static void altp2m_vcpu_reset(struct vcpu *v)
 {
     struct altp2mvcpu *av = &vcpu_altp2m(v);
