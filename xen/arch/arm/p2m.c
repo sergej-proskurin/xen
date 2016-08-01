@@ -692,6 +692,7 @@ static int p2m_shatter_page(struct p2m_domain *p2m,
  * -ve == (-Exxx) error.
  */
 static int apply_one_level(struct domain *d,
+                           struct p2m_domain *p2m,
                            lpae_t *entry,
                            unsigned int level,
                            bool_t flush_cache,
@@ -707,7 +708,6 @@ static int apply_one_level(struct domain *d,
     const paddr_t level_size = level_sizes[level];
     const paddr_t level_mask = level_masks[level];
 
-    struct p2m_domain *p2m = p2m_get_hostp2m(d);
     lpae_t pte;
     const lpae_t orig_pte = *entry;
     int rc;
@@ -945,6 +945,7 @@ static void update_reference_mapping(struct page_info *page,
 }
 
 static int apply_p2m_changes(struct domain *d,
+                     struct p2m_domain *p2m,
                      enum p2m_operation op,
                      gfn_t sgfn,
                      unsigned long nr,
@@ -957,7 +958,6 @@ static int apply_p2m_changes(struct domain *d,
     paddr_t end_gpaddr = pfn_to_paddr(gfn_x(sgfn) + nr);
     paddr_t maddr = pfn_to_paddr(mfn_x(smfn));
     int rc, ret;
-    struct p2m_domain *p2m = p2m_get_hostp2m(d);
     lpae_t *mappings[4] = { NULL, NULL, NULL, NULL };
     struct page_info *pages[4] = { NULL, NULL, NULL, NULL };
     paddr_t addr;
@@ -1083,7 +1083,7 @@ static int apply_p2m_changes(struct domain *d,
             lpae_t *entry = &mappings[level][offset];
             lpae_t old_entry = *entry;
 
-            ret = apply_one_level(d, entry,
+            ret = apply_one_level(d, p2m, entry,
                                   level, flush_pt, op,
                                   start_gpaddr, end_gpaddr,
                                   &addr, &maddr, &flush,
@@ -1168,7 +1168,7 @@ static int apply_p2m_changes(struct domain *d,
 out:
     if ( flush )
     {
-        p2m_flush_tlb(p2m_get_hostp2m(d));
+        p2m_flush_tlb(p2m);
         ret = iommu_iotlb_flush(d, gfn_x(sgfn), nr);
         if ( !rc )
             rc = ret;
@@ -1195,31 +1195,33 @@ out:
          * addr keeps the address of the end of the last successfully-inserted
          * mapping.
          */
-        apply_p2m_changes(d, REMOVE, sgfn, gfn - gfn_x(sgfn), smfn,
-                          0, p2m_invalid, d->arch.p2m.default_access);
+        apply_p2m_changes(d, p2m, REMOVE, sgfn, gfn - gfn_x(sgfn), smfn,
+                          0, p2m_invalid, p2m->default_access);
     }
 
     return rc;
 }
 
 static inline int p2m_insert_mapping(struct domain *d,
+                                     struct p2m_domain *p2m,
                                      gfn_t start_gfn,
                                      unsigned long nr,
                                      mfn_t mfn,
                                      p2m_type_t t)
 {
-    return apply_p2m_changes(d, INSERT, start_gfn, nr, mfn,
-                             0, t, d->arch.p2m.default_access);
+    return apply_p2m_changes(d, p2m, INSERT, start_gfn, nr, mfn,
+                             0, t, p2m->default_access);
 }
 
 static inline int p2m_remove_mapping(struct domain *d,
+                                     struct p2m_domain *p2m,
                                      gfn_t start_gfn,
                                      unsigned long nr,
                                      mfn_t mfn)
 {
-    return apply_p2m_changes(d, REMOVE, start_gfn, nr, mfn,
+    return apply_p2m_changes(d, p2m, REMOVE, start_gfn, nr, mfn,
                              /* arguments below not used when removing mapping */
-                             0, p2m_invalid, d->arch.p2m.default_access);
+                             0, p2m_invalid, p2m->default_access);
 }
 
 int map_regions_rw_cache(struct domain *d,
@@ -1227,7 +1229,7 @@ int map_regions_rw_cache(struct domain *d,
                          unsigned long nr,
                          mfn_t mfn)
 {
-    return p2m_insert_mapping(d, gfn, nr, mfn, p2m_mmio_direct_c);
+    return p2m_insert_mapping(d, p2m_get_hostp2m(d), gfn, nr, mfn, p2m_mmio_direct_c);
 }
 
 int unmap_regions_rw_cache(struct domain *d,
@@ -1235,7 +1237,7 @@ int unmap_regions_rw_cache(struct domain *d,
                            unsigned long nr,
                            mfn_t mfn)
 {
-    return p2m_remove_mapping(d, gfn, nr, mfn);
+    return p2m_remove_mapping(d, p2m_get_hostp2m(d), gfn, nr, mfn);
 }
 
 int map_mmio_regions(struct domain *d,
@@ -1243,7 +1245,7 @@ int map_mmio_regions(struct domain *d,
                      unsigned long nr,
                      mfn_t mfn)
 {
-    return p2m_insert_mapping(d, start_gfn, nr, mfn, p2m_mmio_direct_nc);
+    return p2m_insert_mapping(d, p2m_get_hostp2m(d), start_gfn, nr, mfn, p2m_mmio_direct_nc);
 }
 
 int unmap_mmio_regions(struct domain *d,
@@ -1251,7 +1253,7 @@ int unmap_mmio_regions(struct domain *d,
                        unsigned long nr,
                        mfn_t mfn)
 {
-    return p2m_remove_mapping(d, start_gfn, nr, mfn);
+    return p2m_remove_mapping(d, p2m_get_hostp2m(d), start_gfn, nr, mfn);
 }
 
 int map_dev_mmio_region(struct domain *d,
@@ -1281,14 +1283,14 @@ int guest_physmap_add_entry(struct domain *d,
                             unsigned long page_order,
                             p2m_type_t t)
 {
-    return p2m_insert_mapping(d, gfn, (1 << page_order), mfn, t);
+    return p2m_insert_mapping(d, p2m_get_hostp2m(d), gfn, (1 << page_order), mfn, t);
 }
 
 void guest_physmap_remove_page(struct domain *d,
                                gfn_t gfn,
                                mfn_t mfn, unsigned int page_order)
 {
-    p2m_remove_mapping(d, gfn, (1 << page_order), mfn);
+    p2m_remove_mapping(d, p2m_get_hostp2m(d), gfn, (1 << page_order), mfn);
 }
 
 static int p2m_alloc_table(struct p2m_domain *p2m)
@@ -1479,9 +1481,8 @@ int relinquish_p2m_mapping(struct domain *d)
 
     nr = gfn_x(p2m->max_mapped_gfn) - gfn_x(p2m->lowest_mapped_gfn);
 
-    return apply_p2m_changes(d, RELINQUISH, p2m->lowest_mapped_gfn, nr,
-                             INVALID_MFN, 0, p2m_invalid,
-                             d->arch.p2m.default_access);
+    return apply_p2m_changes(d, p2m, RELINQUISH, p2m->lowest_mapped_gfn, nr,
+                             INVALID_MFN, 0, p2m_invalid, p2m->default_access);
 }
 
 int p2m_cache_flush(struct domain *d, gfn_t start, unsigned long nr)
@@ -1492,8 +1493,8 @@ int p2m_cache_flush(struct domain *d, gfn_t start, unsigned long nr)
     start = gfn_max(start, p2m->lowest_mapped_gfn);
     end = gfn_min(end, p2m->max_mapped_gfn);
 
-    return apply_p2m_changes(d, CACHEFLUSH, start, nr, INVALID_MFN,
-                             0, p2m_invalid, d->arch.p2m.default_access);
+    return apply_p2m_changes(d, p2m, CACHEFLUSH, start, nr, INVALID_MFN,
+                             0, p2m_invalid, p2m->default_access);
 }
 
 mfn_t gfn_to_mfn(struct domain *d, gfn_t gfn)
@@ -1945,7 +1946,7 @@ long p2m_set_mem_access(struct domain *d, gfn_t gfn, uint32_t nr,
         return 0;
     }
 
-    rc = apply_p2m_changes(d, MEMACCESS, gfn_add(gfn, start),
+    rc = apply_p2m_changes(d, p2m, MEMACCESS, gfn_add(gfn, start),
                            (nr - start), INVALID_MFN, mask, 0, a);
     if ( rc < 0 )
         return rc;
