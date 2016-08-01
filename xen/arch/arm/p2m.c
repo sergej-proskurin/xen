@@ -762,7 +762,7 @@ static int apply_one_level(struct domain *d,
                  * of the p2m tree which we would be about to lop off.
                  */
                 BUG_ON(level < 3 && p2m_table(orig_pte));
-                if ( level == 3 )
+                if ( level == 3 && p2m_is_hostp2m(p2m) )
                     p2m_put_l3_page(orig_pte);
             }
             else /* New mapping */
@@ -861,7 +861,7 @@ static int apply_one_level(struct domain *d,
 
         p2m->stats.mappings[level]--;
 
-        if ( level == 3 )
+        if ( level == 3 && p2m_is_hostp2m(p2m) )
             p2m_put_l3_page(orig_pte);
 
         /*
@@ -1958,7 +1958,7 @@ long p2m_set_mem_access(struct domain *d, gfn_t gfn, uint32_t nr,
                         uint32_t start, uint32_t mask, xenmem_access_t access,
                         unsigned int altp2m_idx)
 {
-    struct p2m_domain *p2m = p2m_get_hostp2m(d);
+    struct p2m_domain *hp2m = p2m_get_hostp2m(d), *ap2m = NULL;
     p2m_access_t a;
     long rc = 0;
 
@@ -1977,33 +1977,67 @@ long p2m_set_mem_access(struct domain *d, gfn_t gfn, uint32_t nr,
 #undef ACCESS
     };
 
+    /* altp2m view 0 is treated as the hostp2m */
+    if ( altp2m_idx )
+    {
+        if ( altp2m_idx >= MAX_ALTP2M ||
+             d->arch.altp2m_p2m[altp2m_idx] == NULL )
+            return -EINVAL;
+
+        ap2m = d->arch.altp2m_p2m[altp2m_idx];
+    }
+
     switch ( access )
     {
     case 0 ... ARRAY_SIZE(memaccess) - 1:
         a = memaccess[access];
         break;
     case XENMEM_access_default:
-        a = p2m->default_access;
+        if ( ap2m )
+            a = ap2m->default_access;
+        else
+            a = hp2m->default_access;
         break;
     default:
         return -EINVAL;
     }
 
-    /*
-     * Flip mem_access_enabled to true when a permission is set, as to prevent
-     * allocating or inserting super-pages.
-     */
-    p2m->mem_access_enabled = true;
-
     /* If request to set default access. */
     if ( gfn_eq(gfn, INVALID_GFN) )
     {
-        p2m->default_access = a;
+        if ( ap2m )
+            ap2m->default_access = a;
+        else
+            hp2m->default_access = a;
+
         return 0;
     }
 
-    rc = apply_p2m_changes(d, p2m, MEMACCESS, gfn_add(gfn, start),
-                           (nr - start), INVALID_MFN, mask, 0, a);
+    if ( ap2m )
+    {
+        /*
+         * Flip mem_access_enabled to true when a permission is set, as to prevent
+         * allocating or inserting super-pages.
+         */
+        ap2m->mem_access_enabled = true;
+
+        /*
+         * ARM altp2m currently supports only setting of memory access rights
+         * of only one (4K) page at a time.
+         */
+        rc = altp2m_set_mem_access(d, hp2m, ap2m, a, gfn);
+    }
+    else
+    {
+        /*
+         * Flip mem_access_enabled to true when a permission is set, as to prevent
+         * allocating or inserting super-pages.
+         */
+        hp2m->mem_access_enabled = true;
+
+        rc = apply_p2m_changes(d, hp2m, MEMACCESS, gfn_add(gfn, start),
+                               (nr - start), INVALID_MFN, mask, 0, a);
+    }
     if ( rc < 0 )
         return rc;
     else if ( rc > 0 )
