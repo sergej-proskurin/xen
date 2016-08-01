@@ -14,6 +14,7 @@
 #include <asm/hardirq.h>
 #include <asm/page.h>
 
+#include <asm/vm_event.h>
 #include <asm/altp2m.h>
 
 #ifdef CONFIG_ARM_64
@@ -1775,13 +1776,17 @@ bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
     xenmem_access_t xma;
     vm_event_request_t *req;
     struct vcpu *v = current;
-    struct p2m_domain *p2m = p2m_get_hostp2m(v->domain);
+    struct domain *d = v->domain;
+    struct p2m_domain *p2m = unlikely(altp2m_active(d)) ?
+                             altp2m_get_altp2m(v) : p2m_get_hostp2m(d);
 
     /* Mem_access is not in use. */
     if ( !p2m->mem_access_enabled )
         return true;
 
-    rc = p2m_get_mem_access(v->domain, _gfn(paddr_to_pfn(gpa)), &xma);
+    p2m_read_lock(p2m);
+    rc = __p2m_get_mem_access(p2m, _gfn(paddr_to_pfn(gpa)), &xma);
+    p2m_read_unlock(p2m);
     if ( rc )
         return true;
 
@@ -1886,6 +1891,14 @@ bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
         req->u.mem_access.flags |= npfec.write_access   ? MEM_ACCESS_W : 0;
         req->u.mem_access.flags |= npfec.insn_fetch     ? MEM_ACCESS_X : 0;
         req->vcpu_id = v->vcpu_id;
+
+        vm_event_fill_regs(req);
+
+        if ( unlikely(altp2m_active(d)) )
+        {
+            req->flags |= VM_EVENT_FLAG_ALTERNATE_P2M;
+            req->altp2m_idx = vcpu_altp2m(v).p2midx;
+        }
 
         mem_access_send_req(v->domain, req);
         xfree(req);
