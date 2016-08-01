@@ -139,7 +139,7 @@ void p2m_restore_state(struct vcpu *n)
     isb();
 }
 
-static void p2m_flush_tlb(struct p2m_domain *p2m)
+void p2m_flush_tlb(struct p2m_domain *p2m)
 {
     unsigned long flags = 0;
     uint64_t ovttbr;
