@@ -288,6 +288,19 @@ mfn_t p2m_lookup(struct domain *d, gfn_t gfn, p2m_type_t *t)
     return ret;
 }
 
+mfn_t p2m_lookup_attr(struct p2m_domain *p2m, gfn_t gfn, p2m_type_t *t,
+                      unsigned int *level, unsigned int *mattr,
+                      xenmem_access_t *xma)
+{
+    mfn_t ret;
+
+    p2m_read_lock(p2m);
+    ret = __p2m_lookup(p2m, gfn, t, level, mattr, xma);
+    p2m_read_unlock(p2m);
+
+    return ret;
+}
+
 int guest_physmap_mark_populate_on_demand(struct domain *d,
                                           unsigned long gfn,
                                           unsigned int order)
@@ -760,7 +773,7 @@ static int apply_one_level(struct domain *d,
                  * of the p2m tree which we would be about to lop off.
                  */
                 BUG_ON(level < 3 && p2m_table(orig_pte));
-                if ( level == 3 )
+                if ( level == 3 && p2m_is_hostp2m(p2m) )
                     p2m_put_l3_page(orig_pte);
             }
             else /* New mapping */
@@ -859,7 +872,7 @@ static int apply_one_level(struct domain *d,
 
         p2m->stats.mappings[level]--;
 
-        if ( level == 3 )
+        if ( level == 3 && p2m_is_hostp2m(p2m) )
             p2m_put_l3_page(orig_pte);
 
         /*
@@ -1301,6 +1314,21 @@ void guest_physmap_remove_page(struct domain *d,
                                mfn_t mfn, unsigned int page_order)
 {
     p2m_remove_mapping(d, p2m_get_hostp2m(d), gfn, (1 << page_order), mfn);
+}
+
+int modify_altp2m_entry(struct domain *d, struct p2m_domain *ap2m,
+                        paddr_t gpa, paddr_t maddr, unsigned int level,
+                        p2m_type_t t, p2m_access_t a)
+{
+    paddr_t size = level_sizes[level];
+    paddr_t mask = level_masks[level];
+    gfn_t gfn = _gfn(paddr_to_pfn(gpa & mask));
+    mfn_t mfn = _mfn(paddr_to_pfn(maddr & mask));
+    unsigned long nr = paddr_to_pfn(size);
+
+    ASSERT(p2m_is_altp2m(ap2m));
+
+    return apply_p2m_changes(d, ap2m, INSERT, gfn, nr, mfn, 0, t, a);
 }
 
 int p2m_alloc_table(struct p2m_domain *p2m)
@@ -1920,7 +1948,7 @@ long p2m_set_mem_access(struct domain *d, gfn_t gfn, uint32_t nr,
                         uint32_t start, uint32_t mask, xenmem_access_t access,
                         unsigned int altp2m_idx)
 {
-    struct p2m_domain *p2m = p2m_get_hostp2m(d);
+    struct p2m_domain *hp2m = p2m_get_hostp2m(d), *ap2m = NULL;
     p2m_access_t a;
     long rc = 0;
 
@@ -1939,33 +1967,60 @@ long p2m_set_mem_access(struct domain *d, gfn_t gfn, uint32_t nr,
 #undef ACCESS
     };
 
+    /* altp2m view 0 is treated as the hostp2m */
+    if ( altp2m_idx )
+    {
+        if ( altp2m_idx >= MAX_ALTP2M ||
+             d->arch.altp2m_vttbr[altp2m_idx] == INVALID_VTTBR )
+            return -EINVAL;
+
+        ap2m = d->arch.altp2m_p2m[altp2m_idx];
+    }
+
     switch ( access )
     {
     case 0 ... ARRAY_SIZE(memaccess) - 1:
         a = memaccess[access];
         break;
     case XENMEM_access_default:
-        a = p2m->default_access;
+        a = hp2m->default_access;
         break;
     default:
         return -EINVAL;
     }
 
-    /*
-     * Flip mem_access_enabled to true when a permission is set, as to prevent
-     * allocating or inserting super-pages.
-     */
-    p2m->mem_access_enabled = true;
-
     /* If request to set default access. */
     if ( gfn_eq(gfn, INVALID_GFN) )
     {
-        p2m->default_access = a;
+        hp2m->default_access = a;
         return 0;
     }
 
-    rc = apply_p2m_changes(d, p2m, MEMACCESS, gfn_add(gfn, start),
-                           (nr - start), INVALID_MFN, mask, 0, a);
+    if ( ap2m )
+    {
+        /*
+         * Flip mem_access_enabled to true when a permission is set, as to prevent
+         * allocating or inserting super-pages.
+         */
+        ap2m->mem_access_enabled = true;
+
+        /*
+         * ARM altp2m currently supports only setting of memory access rights
+         * of only one (4K) page at a time.
+         */
+        rc = altp2m_set_mem_access(d, hp2m, ap2m, a, gfn);
+    }
+    else
+    {
+        /*
+         * Flip mem_access_enabled to true when a permission is set, as to prevent
+         * allocating or inserting super-pages.
+         */
+        hp2m->mem_access_enabled = true;
+
+        rc = apply_p2m_changes(d, hp2m, MEMACCESS, gfn_add(gfn, start),
+                               (nr - start), INVALID_MFN, mask, 0, a);
+    }
     if ( rc < 0 )
         return rc;
     else if ( rc > 0 )
