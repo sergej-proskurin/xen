@@ -992,6 +992,7 @@ static int apply_p2m_changes(struct domain *d,
     const bool_t preempt = !is_idle_vcpu(current);
     bool_t flush = false;
     bool_t flush_pt;
+    bool_t entry_written = false;
     PAGE_LIST_HEAD(free_pages);
     struct page_info *pg;
 
@@ -1112,6 +1113,7 @@ static int apply_p2m_changes(struct domain *d,
                                   &addr, &maddr, &flush,
                                   t, a);
             if ( ret < 0 ) { rc = ret ; goto out; }
+            if ( ret ) entry_written = 1;
             count += ret;
 
             if ( ret != P2M_ONE_PROGRESS_NOP )
@@ -1207,6 +1209,9 @@ out:
     }
 
     p2m_write_unlock(p2m);
+
+    if ( rc >= 0 && entry_written && p2m_is_hostp2m(p2m) )
+        altp2m_propagate_change(d, sgfn, nr, smfn, mask, t, a);
 
     if ( rc < 0 && ( op == INSERT ) &&
          addr != start_gpaddr )
@@ -1329,6 +1334,15 @@ int modify_altp2m_entry(struct domain *d, struct p2m_domain *ap2m,
     ASSERT(p2m_is_altp2m(ap2m));
 
     return apply_p2m_changes(d, ap2m, INSERT, gfn, nr, mfn, 0, t, a);
+}
+
+int modify_altp2m_range(struct domain *d, struct p2m_domain *ap2m,
+                        gfn_t sgfn, unsigned long nr, mfn_t smfn,
+                        uint32_t m, p2m_type_t t, p2m_access_t a)
+{
+    ASSERT(p2m_is_altp2m(ap2m));
+
+    return apply_p2m_changes(d, ap2m, INSERT, sgfn, nr, smfn, m, t, a);
 }
 
 int p2m_alloc_table(struct p2m_domain *p2m)

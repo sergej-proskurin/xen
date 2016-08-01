@@ -133,6 +133,81 @@ out:
     return rc;
 }
 
+static inline void altp2m_reset(struct p2m_domain *p2m)
+{
+    read_lock(&p2m->lock);
+
+    p2m_flush_table(p2m);
+    p2m_flush_tlb(p2m);
+
+    p2m->lowest_mapped_gfn = INVALID_GFN;
+    p2m->max_mapped_gfn = _gfn(0);
+
+    read_unlock(&p2m->lock);
+}
+
+void altp2m_propagate_change(struct domain *d,
+                             gfn_t sgfn,
+                             unsigned long nr,
+                             mfn_t smfn,
+                             uint32_t mask,
+                             p2m_type_t p2mt,
+                             p2m_access_t p2ma)
+{
+    struct p2m_domain *p2m;
+    mfn_t m;
+    unsigned int i;
+    unsigned int reset_count = 0;
+    unsigned int last_reset_idx = ~0;
+
+    if ( !altp2m_active(d) )
+        return;
+
+    altp2m_lock(d);
+
+    for ( i = 0; i < MAX_ALTP2M; i++ )
+    {
+        if ( d->arch.altp2m_vttbr[i] == INVALID_VTTBR )
+            continue;
+
+        p2m = d->arch.altp2m_p2m[i];
+
+        m = p2m_lookup_attr(p2m, sgfn, NULL, NULL, NULL, NULL);
+
+        /* Check for a dropped page that may impact this altp2m. */
+        if ( (mfn_eq(smfn, INVALID_MFN) || p2mt == p2m_invalid) &&
+             gfn_x(sgfn) >= gfn_x(p2m->lowest_mapped_gfn) &&
+             gfn_x(sgfn) <= gfn_x(p2m->max_mapped_gfn) )
+        {
+            if ( !reset_count++ )
+            {
+                altp2m_reset(p2m);
+                last_reset_idx = i;
+            }
+            else
+            {
+                /* At least 2 altp2m's impacted, so reset everything. */
+                for ( i = 0; i < MAX_ALTP2M; i++ )
+                {
+                    if ( i == last_reset_idx ||
+                         d->arch.altp2m_vttbr[i] == INVALID_VTTBR )
+                        continue;
+
+                    p2m = d->arch.altp2m_p2m[i];
+                    altp2m_reset(p2m);
+                }
+                goto out;
+            }
+        }
+        else if ( !mfn_eq(m, INVALID_MFN) )
+            modify_altp2m_range(d, p2m, sgfn, nr, smfn,
+                                mask, p2mt, p2ma);
+    }
+
+out:
+    altp2m_unlock(d);
+}
+
 static void altp2m_vcpu_reset(struct vcpu *v)
 {
     struct altp2mvcpu *av = &vcpu_altp2m(v);
