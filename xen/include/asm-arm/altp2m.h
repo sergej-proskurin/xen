@@ -53,6 +53,10 @@ void altp2m_vcpu_destroy(struct vcpu *v);
 int altp2m_init_by_id(struct domain *d,
                       unsigned int idx);
 
+/* Find an available alternate p2m and make it valid */
+int altp2m_init_next(struct domain *d,
+                     uint16_t *idx);
+
 /* Flush all the alternate p2m's for a domain */
 void altp2m_flush(struct domain *d);
 
