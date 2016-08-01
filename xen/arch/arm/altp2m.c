@@ -151,6 +151,44 @@ int altp2m_init(struct domain *d)
     return 0;
 }
 
+void altp2m_flush(struct domain *d)
+{
+    unsigned int i;
+    struct p2m_domain *p2m;
+
+    /*
+     * If altp2m is active, we are not allowed to flush altp2m[0]. This special
+     * view is considered as the hostp2m as long as altp2m is active.
+     */
+    ASSERT(!altp2m_active(d));
+
+    altp2m_lock(d);
+
+    for ( i = 0; i < MAX_ALTP2M; i++ )
+    {
+        if ( d->arch.altp2m_vttbr[i] == INVALID_VTTBR )
+            continue;
+
+        p2m = d->arch.altp2m_p2m[i];
+
+        read_lock(&p2m->lock);
+
+        p2m_flush_table(p2m);
+
+        /*
+         * Reset VTTBR.
+         *
+         * Note that VMID is not freed so that it can be reused later.
+         */
+        p2m->vttbr.vttbr = INVALID_VTTBR;
+        d->arch.altp2m_vttbr[i] = INVALID_VTTBR;
+
+        read_unlock(&p2m->lock);
+    }
+
+    altp2m_unlock(d);
+}
+
 void altp2m_teardown(struct domain *d)
 {
     unsigned int i;

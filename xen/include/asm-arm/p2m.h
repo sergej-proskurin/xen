@@ -222,6 +222,9 @@ mfn_t gfn_to_mfn(struct domain *d, gfn_t gfn);
 /* Allocates page table for a p2m. */
 int p2m_alloc_table(struct p2m_domain *p2m);
 
+/* Flushes the page table held by the p2m. */
+void p2m_flush_table(struct p2m_domain *p2m);
+
 /* Initialize the p2m structure. */
 int p2m_init_one(struct domain *d, struct p2m_domain *p2m);
 
