@@ -29,6 +29,11 @@
 #define altp2m_lock(d)    spin_lock(&(d)->arch.altp2m_lock)
 #define altp2m_unlock(d)  spin_unlock(&(d)->arch.altp2m_lock)
 
+typedef enum {
+    ALTP2M_MODIFY,
+    ALTP2M_REMOVE,
+} altp2m_operation_t;
+
 /* Alternate p2m on/off per domain */
 static inline bool_t altp2m_active(const struct domain *d)
 {
@@ -82,5 +87,15 @@ int altp2m_set_mem_access(struct domain *d,
                           struct p2m_domain *ap2m,
                           p2m_access_t a,
                           gfn_t gfn);
+
+/* Propagates changes made to hostp2m to affected altp2m views. */
+int altp2m_propagate_change(struct domain *d,
+                            altp2m_operation_t op,
+                            gfn_t sgfn,
+                            unsigned long nr,
+                            mfn_t smfn,
+                            uint32_t mask,
+                            p2m_type_t p2mt,
+                            p2m_access_t p2ma);
 
 #endif /* __ASM_ARM_ALTP2M_H */
