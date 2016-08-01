@@ -38,9 +38,7 @@ static inline bool_t altp2m_active(const struct domain *d)
 /* Alternate p2m VCPU */
 static inline uint16_t altp2m_vcpu_idx(const struct vcpu *v)
 {
-    /* Not implemented on ARM, should not be reached. */
-    BUG();
-    return 0;
+    return vcpu_altp2m(v).p2midx;
 }
 
 int altp2m_init(struct domain *d);
@@ -51,6 +49,10 @@ void altp2m_vcpu_destroy(struct vcpu *v);
 
 /* Get current alternate p2m table. */
 struct p2m_domain *altp2m_get_altp2m(struct vcpu *v);
+
+/* Switch alternate p2m for a single vcpu. */
+bool_t altp2m_switch_vcpu_altp2m_by_id(struct vcpu *v,
+                                       unsigned int idx);
 
 /* Switch alternate p2m for entire domain */
 int altp2m_switch_domain_altp2m_by_id(struct domain *d,
@@ -80,6 +82,13 @@ int altp2m_set_mem_access(struct domain *d,
                           struct p2m_domain *ap2m,
                           p2m_access_t a,
                           gfn_t gfn);
+
+/* Alternate p2m paging mechanism. */
+bool_t altp2m_lazy_copy(struct vcpu *v,
+                        paddr_t gpa,
+                        unsigned long gla,
+                        struct npfec npfec,
+                        struct p2m_domain **ap2m);
 
 /* Propagates changes made to hostp2m to affected altp2m views. */
 void altp2m_propagate_change(struct domain *d,

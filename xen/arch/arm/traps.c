@@ -48,6 +48,8 @@
 #include <asm/vgic.h>
 #include <asm/cpuerrata.h>
 
+#include <asm/altp2m.h>
+
 /* The base of the stack must always be double-word aligned, which means
  * that both the kernel half of struct cpu_user_regs (which is pushed in
  * entry.S) and struct cpu_info (which lives at the bottom of a Xen
@@ -2403,34 +2405,63 @@ static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
     int rc;
     register_t gva = READ_SYSREG(FAR_EL2);
     uint8_t fsc = hsr.iabt.ifsc & ~FSC_LL_MASK;
+    struct vcpu *v = current;
+    struct domain *d = v->domain;
+    struct p2m_domain *p2m = NULL;
+    paddr_t gpa;
+
+    if ( hpfar_is_valid(hsr.iabt.s1ptw, fsc) )
+        gpa = get_faulting_ipa(gva);
+    else
+    {
+        /*
+         * Flush the TLB to make sure the DTLB is clear before
+         * doing GVA->IPA translation. If we got here because of
+         * an entry only present in the ITLB, this translation may
+         * still be inaccurate.
+         */
+        flush_tlb_local();
+
+        rc = gva_to_ipa(gva, &gpa, GV2M_READ);
+        if ( rc == -EFAULT )
+            return; /* Try again */
+    }
 
     switch ( fsc )
     {
+    case FSC_FLT_TRANS:
+    {
+        if ( altp2m_active(d) )
+        {
+            const struct npfec npfec = {
+                .insn_fetch = 1,
+                .gla_valid = 1,
+                .kind = hsr.iabt.s1ptw ? npfec_kind_in_gpt : npfec_kind_with_gla
+            };
+
+            /*
+             * Copy the entire page of the failing instruction into the
+             * currently active altp2m view.
+             */
+            if ( altp2m_lazy_copy(v, gpa, gva, npfec, &p2m) )
+                return;
+
+            rc = p2m_mem_access_check(gpa, gva, npfec);
+
+            /* Trap was triggered by mem_access, work here is done */
+            if ( !rc )
+                return;
+        }
+
+        break;
+    }
     case FSC_FLT_PERM:
     {
-        paddr_t gpa;
         const struct npfec npfec = {
             .insn_fetch = 1,
             .gla_valid = 1,
             .kind = hsr.iabt.s1ptw ? npfec_kind_in_gpt : npfec_kind_with_gla
         };
-
-        if ( hpfar_is_valid(hsr.iabt.s1ptw, fsc) )
-            gpa = get_faulting_ipa(gva);
-        else
-        {
-            /*
-             * Flush the TLB to make sure the DTLB is clear before
-             * doing GVA->IPA translation. If we got here because of
-             * an entry only present in the ITLB, this translation may
-             * still be inaccurate.
-             */
-            flush_tlb_local();
-
-            rc = gva_to_ipa(gva, &gpa, GV2M_READ);
-            if ( rc == -EFAULT )
-                return; /* Try again */
-        }
 
         rc = p2m_mem_access_check(gpa, gva, npfec);
 
@@ -2451,6 +2482,8 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
     int rc;
     mmio_info_t info;
     uint8_t fsc = hsr.dabt.dfsc & ~FSC_LL_MASK;
+    struct vcpu *v = current;
+    struct p2m_domain *p2m = NULL;
 
     info.dabt = dabt;
 #ifdef CONFIG_ARM_32
@@ -2459,7 +2492,7 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
     info.gva = READ_SYSREG64(FAR_EL2);
 #endif
 
-    if ( hpfar_is_valid(hsr.iabt.s1ptw, fsc) )
+    if ( hpfar_is_valid(hsr.dabt.s1ptw, fsc) )
         info.gpa = get_faulting_ipa(info.gva);
     else
     {
@@ -2470,23 +2503,31 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
 
     switch ( fsc )
     {
-    case FSC_FLT_PERM:
-    {
-        const struct npfec npfec = {
-            .read_access = !dabt.write,
-            .write_access = dabt.write,
-            .gla_valid = 1,
-            .kind = dabt.s1ptw ? npfec_kind_in_gpt : npfec_kind_with_gla
-        };
-
-        rc = p2m_mem_access_check(info.gpa, info.gva, npfec);
-
-        /* Trap was triggered by mem_access, work here is done */
-        if ( !rc )
-            return;
-        break;
-    }
     case FSC_FLT_TRANS:
+    {
+        if ( altp2m_active(current->domain) )
+        {
+            const struct npfec npfec = {
+                .read_access = !dabt.write,
+                .write_access = dabt.write,
+                .gla_valid = 1,
+                .kind = dabt.s1ptw ? npfec_kind_in_gpt : npfec_kind_with_gla
+            };
+
+            /*
+             * Copy the entire page of the failing data access into the
+             * currently active altp2m view.
+             */
+            if ( altp2m_lazy_copy(v, info.gpa, info.gva, npfec, &p2m) )
+                return;
+
+            rc = p2m_mem_access_check(info.gpa, info.gva, npfec);
+
+            /* Trap was triggered by mem_access, work here is done */
+            if ( !rc )
+                return;
+        }
+
         if ( dabt.s1ptw )
             goto bad_data_abort;
 
@@ -2515,6 +2556,23 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
             return;
         }
         break;
+    }
+    case FSC_FLT_PERM:
+    {
+        const struct npfec npfec = {
+            .read_access = !dabt.write,
+            .write_access = dabt.write,
+            .gla_valid = 1,
+            .kind = dabt.s1ptw ? npfec_kind_in_gpt : npfec_kind_with_gla
+        };
+
+        rc = p2m_mem_access_check(info.gpa, info.gva, npfec);
+
+        /* Trap was triggered by mem_access, work here is done */
+        if ( !rc )
+            return;
+        break;
+    }
     default:
         gprintk(XENLOG_WARNING, "Unsupported DFSC: HSR=%#x DFSC=%#x\n",
                 hsr.bits, dabt.dfsc);

@@ -33,6 +33,32 @@ struct p2m_domain *altp2m_get_altp2m(struct vcpu *v)
     return v->domain->arch.altp2m_p2m[index];
 }
 
+bool_t altp2m_switch_vcpu_altp2m_by_id(struct vcpu *v, unsigned int idx)
+{
+    struct domain *d = v->domain;
+    bool_t rc = 0;
+
+    if ( idx >= MAX_ALTP2M )
+        return rc;
+
+    altp2m_lock(d);
+
+    if ( d->arch.altp2m_vttbr[idx] != INVALID_VTTBR )
+    {
+        if ( idx != vcpu_altp2m(v).p2midx )
+        {
+            atomic_dec(&altp2m_get_altp2m(v)->active_vcpus);
+            vcpu_altp2m(v).p2midx = idx;
+            atomic_inc(&altp2m_get_altp2m(v)->active_vcpus);
+        }
+        rc = 1;
+    }
+
+    altp2m_unlock(d);
+
+    return rc;
+}
+
 int altp2m_switch_domain_altp2m_by_id(struct domain *d, unsigned int idx)
 {
     struct vcpu *v;
@@ -130,6 +156,66 @@ int altp2m_set_mem_access(struct domain *d,
 out:
     altp2m_unlock(d);
 
+    return rc;
+}
+
+bool_t altp2m_lazy_copy(struct vcpu *v,
+                        paddr_t gpa,
+                        unsigned long gva,
+                        struct npfec npfec,
+                        struct p2m_domain **ap2m)
+{
+    struct domain *d = v->domain;
+    struct p2m_domain *hp2m = p2m_get_hostp2m(v->domain);
+    p2m_type_t p2mt;
+    xenmem_access_t xma;
+    gfn_t gfn = _gfn(paddr_to_pfn(gpa));
+    mfn_t mfn;
+    unsigned int level;
+    int rc = 0;
+
+    static const p2m_access_t memaccess[] = {
+#define ACCESS(ac) [XENMEM_access_##ac] = p2m_access_##ac
+        ACCESS(n),
+        ACCESS(r),
+        ACCESS(w),
+        ACCESS(rw),
+        ACCESS(x),
+        ACCESS(rx),
+        ACCESS(wx),
+        ACCESS(rwx),
+        ACCESS(rx2rw),
+        ACCESS(n2rwx),
+#undef ACCESS
+    };
+
+    *ap2m = altp2m_get_altp2m(v);
+    if ( *ap2m == NULL)
+        return 0;
+
+    /* Check if entry is part of the altp2m view */
+    mfn = p2m_lookup_attr(*ap2m, gfn, NULL, NULL, NULL, NULL);
+    if ( !mfn_eq(mfn, INVALID_MFN) )
+        goto out;
+
+    /* Check if entry is part of the host p2m view */
+    mfn = p2m_lookup_attr(hp2m, gfn, &p2mt, &level, NULL, &xma);
+    if ( mfn_eq(mfn, INVALID_MFN) )
+        goto out;
+
+    rc = modify_altp2m_entry(d, *ap2m, gpa, pfn_to_paddr(mfn_x(mfn)), level,
+                             p2mt, memaccess[xma]);
+    if ( rc )
+    {
+        gdprintk(XENLOG_ERR, "failed to set entry for %lx -> %lx p2m %lx\n",
+                (unsigned long)gpa, (unsigned long)(paddr_to_pfn(mfn_x(mfn))),
+                (unsigned long)*ap2m);
+        domain_crash(hp2m->domain);
+    }
+
+    rc = 1;
+
+out:
     return rc;
 }
 
