@@ -81,4 +81,13 @@ int altp2m_set_mem_access(struct domain *d,
                           p2m_access_t a,
                           gfn_t gfn);
 
+/* Propagates changes made to hostp2m to affected altp2m views. */
+void altp2m_propagate_change(struct domain *d,
+                             gfn_t sgfn,
+                             unsigned long nr,
+                             mfn_t smfn,
+                             uint32_t mask,
+                             p2m_type_t p2mt,
+                             p2m_access_t p2ma);
+
 #endif /* __ASM_ARM_ALTP2M_H */
