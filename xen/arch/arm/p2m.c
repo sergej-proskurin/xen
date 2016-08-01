@@ -115,7 +115,9 @@ void p2m_save_state(struct vcpu *p)
 void p2m_restore_state(struct vcpu *n)
 {
     register_t hcr;
-    struct p2m_domain *p2m = &n->domain->arch.p2m;
+    struct domain *d = n->domain;
+    struct p2m_domain *p2m = unlikely(altp2m_active(d)) ?
+                             altp2m_get_altp2m(n) : p2m_get_hostp2m(d);
 
     if ( is_idle_vcpu(n) )
         return;
