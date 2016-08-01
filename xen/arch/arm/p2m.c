@@ -1614,7 +1614,7 @@ struct page_info *get_page_from_gva(struct vcpu *v, vaddr_t va,
                                     unsigned long flags)
 {
     struct domain *d = v->domain;
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
     struct page_info *page = NULL;
     paddr_t maddr = 0;
     int rc;
@@ -1628,7 +1628,34 @@ struct page_info *get_page_from_gva(struct vcpu *v, vaddr_t va,
 
     p2m_read_lock(p2m);
 
-    rc = gvirt_to_maddr(va, &maddr, flags);
+    /*
+     * If altp2m is active, we still read the gva from the hostp2m, as it
+     * contains all valid mappings while the currently active altp2m view might
+     * not have the required gva mapping yet.
+     */
+    if ( unlikely(altp2m_active(d)) )
+    {
+        unsigned long irq_flags = 0;
+        uint64_t ovttbr = READ_SYSREG64(VTTBR_EL2);
+
+        if ( ovttbr != p2m->vttbr.vttbr )
+        {
+            local_irq_save(irq_flags);
+            WRITE_SYSREG64(p2m->vttbr.vttbr, VTTBR_EL2);
+            isb();
+        }
+
+        rc = gvirt_to_maddr(va, &maddr, flags);
+
+        if ( ovttbr != p2m->vttbr.vttbr )
+        {
+            WRITE_SYSREG64(ovttbr, VTTBR_EL2);
+            isb();
+            local_irq_restore(irq_flags);
+        }
+    }
+    else
+        rc = gvirt_to_maddr(va, &maddr, flags);
 
     if ( rc )
         goto err;
