@@ -1870,8 +1870,26 @@ bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
     p2m_read_lock(p2m);
     rc = __p2m_get_mem_access(p2m, _gfn(paddr_to_pfn(gpa)), &xma);
     p2m_read_unlock(p2m);
-    if ( rc )
-        return true;
+    switch (rc )
+    {
+    case -ESRCH:
+        /*
+         * If we can't find any mem_access setting for this page then the page
+         * might have just been removed and the event was triggered by no longer
+         * valid settings. The vCPU should just retry to get to the proper error
+         * path.
+         */
+        return false;
+    case -ERANGE:
+        /*
+         * The mem_access settings are corrupted. Crashing the domain is the
+         * appropriate step in this case.
+         */
+        domain_crash(v->domain);
+        return false;
+    };
+
+    ASSERT(!rc);
 
     /* Now check for mem_access violation. */
     switch ( xma )
@@ -1905,8 +1923,13 @@ bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
         break;
     }
 
+    /*
+     * If there is no violation found based on the current setting this event
+     * has been triggereded by a setting that is no longer current. The vCPU
+     * should just retry the access in this case.
+     */
     if ( !violation )
-        return true;
+        return false;
 
     /* First, handle rx2rw and n2rwx conversion automatically. */
     if ( npfec.write_access && xma == XENMEM_access_rx2rw )
