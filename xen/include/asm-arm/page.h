@@ -414,7 +414,7 @@ void dump_pt_walk(paddr_t ttbr, paddr_t addr,
 /* Print a walk of the hypervisor's page tables for a virtual addr. */
 extern void dump_hyp_walk(vaddr_t addr);
 /* Print a walk of the p2m for a domain for a physical address. */
-extern void dump_p2m_lookup(struct domain *d, paddr_t addr);
+extern void dump_p2m_lookup(struct vcpu *v, paddr_t addr);
 
 static inline uint64_t va_to_par(vaddr_t va)
 {

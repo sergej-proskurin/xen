@@ -33,6 +33,9 @@
 #include <asm/hypercall.h>
 
 #include <asm/altp2m.h>
+/* TEST */
+#include <asm/flushtlb.h>
+/* TEST END */
 
 static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
 {
@@ -82,7 +85,7 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
     case HVMOP_altp2m_set_domain_state:
     {
         struct vcpu *v;
-        bool_t ostate;
+        bool_t ostate, nstate;
 
         if ( !altp2m_enabled(d) )
         {
@@ -90,20 +93,34 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
             break;
         }
 
+/* TEST */
+        printk(XENLOG_INFO "[DBG] set_domain_state: domain pause\n");
+/* TEST END */
+
+        domain_pause_except_self(d);
+
         ostate = d->arch.altp2m_active;
-        d->arch.altp2m_active = !!a.u.domain_state.state;
+//        d->arch.altp2m_active = !!a.u.domain_state.state;
+        nstate = !!a.u.domain_state.state;
 
         /* If the alternate p2m state has changed, handle appropriately */
-        if ( (d->arch.altp2m_active != ostate) &&
+//        if ( (d->arch.altp2m_active != ostate) &&
+        if ( (nstate != ostate) &&
              (ostate || !(rc = altp2m_init_by_id(d, 0))) )
         {
             for_each_vcpu( d, v )
             {
                 if ( !ostate )
+                {
+                    altp2m_lock(d);
                     altp2m_vcpu_initialise(v);
+                    altp2m_unlock(d);
+                }
                 else
                     altp2m_vcpu_destroy(v);
             }
+
+            d->arch.altp2m_active = nstate;
 
             /*
              * The altp2m_active state has been deactivated. It is now safe to
@@ -112,6 +129,12 @@ static int do_altp2m_op(XEN_GUEST_HANDLE_PARAM(void) arg)
             if ( ostate )
                 altp2m_flush(d);
         }
+
+        domain_unpause_except_self(d);
+/* TEST */
+        printk(XENLOG_INFO "[DBG] set_domain_state: domain unpause\n");
+/* TEST END */
+
         break;
     }
 

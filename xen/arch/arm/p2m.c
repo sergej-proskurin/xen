@@ -95,9 +95,10 @@ void memory_type_changed(struct domain *d)
 {
 }
 
-void dump_p2m_lookup(struct domain *d, paddr_t addr)
+void dump_p2m_lookup(struct vcpu *v, paddr_t addr)
 {
-    struct p2m_domain *p2m = &d->arch.p2m;
+    struct domain *d = v->domain;
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
 
     printk("dom%d IPA 0x%"PRIpaddr"\n", d->domain_id, addr);
 
@@ -112,6 +113,7 @@ void dump_p2m_lookup(struct domain *d, paddr_t addr)
     {
         unsigned int i;
 
+        printk("dom%d active altp2m[%d]\n", d->domain_id, altp2m_vcpu_idx(v));
         for ( i = 0; i < MAX_ALTP2M; i++ )
         {
             if ( d->arch.altp2m_vttbr[i] == INVALID_VTTBR )
@@ -142,6 +144,18 @@ void p2m_restore_state(struct vcpu *n)
 
     if ( is_idle_vcpu(n) )
         return;
+
+/* TEST */
+//    {
+//        unsigned int i;
+//        if ( altp2m_active(d) )
+//            for ( i = 0; i < 1000000; i++ )
+//            {
+//                dsb();
+//                isb();
+//            }
+//    }
+/* TEST END */
 
     hcr = READ_SYSREG(HCR_EL2);
     WRITE_SYSREG(hcr & ~HCR_VM, HCR_EL2);
@@ -1865,7 +1879,12 @@ bool_t p2m_mem_access_check(paddr_t gpa, vaddr_t gla, const struct npfec npfec)
 
     /* Mem_access is not in use. */
     if ( !p2m->mem_access_enabled )
+    {
+/* TEST */
+        printk(XENLOG_INFO "[DBG] p2m_mem_access_check p2m->mem_access_enabled=%d\n", p2m->mem_access_enabled);
+/* TEST END */
         return true;
+    }
 
     p2m_read_lock(p2m);
     rc = __p2m_get_mem_access(p2m, _gfn(paddr_to_pfn(gpa)), &xma);

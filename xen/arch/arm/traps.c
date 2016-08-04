@@ -2439,18 +2439,36 @@ static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
                 .kind = hsr.iabt.s1ptw ? npfec_kind_in_gpt : npfec_kind_with_gla
             };
 
+/* TEST */
+            printk(XENLOG_INFO "[DBG] instr_abort: 1 - vcpu=%d HSR=0x%x pc=%#"PRIregister
+                    " gva=%#"PRIvaddr" gpa=%#"PRIpaddr"\n", current->vcpu_id, hsr.bits, regs->pc, gva, gpa);
+/* TEST END */
+
             /*
              * Copy the entire page of the failing instruction into the
              * currently active altp2m view.
              */
             if ( altp2m_lazy_copy(v, gpa, gva, npfec, &p2m) )
+            {
+/* TEST */
+            printk(XENLOG_INFO "[DBG] instr_abort: 2 - vcpu=%d HSR=0x%x pc=%#"PRIregister
+                    " gva=%#"PRIvaddr" gpa=%#"PRIpaddr"\n", current->vcpu_id, hsr.bits, regs->pc, gva, gpa);
+/* TEST END */
                 return;
+            }
 
+/* TEST */
+            p2m->mem_access_enabled = true;
+/* TEST END */
             rc = p2m_mem_access_check(gpa, gva, npfec);
 
             /* Trap was triggered by mem_access, work here is done */
             if ( !rc )
                 return;
+/* TEST */
+            printk(XENLOG_INFO "[DBG] instr_abort: 3 - vcpu=%d HSR=0x%x pc=%#"PRIregister
+                    " gva=%#"PRIvaddr" gpa=%#"PRIpaddr"\n", current->vcpu_id, hsr.bits, regs->pc, gva, gpa);
+/* TEST END */
         }
 
         break;
@@ -2473,6 +2491,12 @@ static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
     }
 
     inject_iabt_exception(regs, gva, hsr.len);
+
+/* TEST */
+    gdprintk(XENLOG_DEBUG, "HSR=0x%x pc=%#"PRIregister" gva=%#"PRIvaddr
+             " gpa=%#"PRIpaddr"\n", hsr.bits, regs->pc, gva, gpa);
+    dump_p2m_lookup(v, gpa);
+/* TEST END */
 }
 
 static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
@@ -2581,6 +2605,9 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
 bad_data_abort:
     gdprintk(XENLOG_DEBUG, "HSR=0x%x pc=%#"PRIregister" gva=%#"PRIvaddr
              " gpa=%#"PRIpaddr"\n", hsr.bits, regs->pc, info.gva, info.gpa);
+/* TEST */
+    dump_p2m_lookup(v, info.gpa);
+/* TEST END */
     inject_dabt_exception(regs, info.gva, hsr.len);
 }
 

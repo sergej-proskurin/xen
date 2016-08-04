@@ -193,6 +193,11 @@ bool_t altp2m_lazy_copy(struct vcpu *v,
     if ( *ap2m == NULL)
         return 0;
 
+/* TEST */
+    (*ap2m)->mem_access_enabled = true;
+    hp2m->mem_access_enabled = true;
+/* TEST END */
+
     /* Check if entry is part of the altp2m view */
     mfn = p2m_lookup_attr(*ap2m, gfn, NULL, NULL, NULL, NULL);
     if ( !mfn_eq(mfn, INVALID_MFN) )
@@ -503,12 +508,12 @@ int altp2m_init_by_id(struct domain *d, unsigned int idx)
     if ( idx >= MAX_ALTP2M )
         return rc;
 
-    altp2m_lock(d);
+//    altp2m_lock(d);
 
     if ( d->arch.altp2m_vttbr[idx] == INVALID_VTTBR )
         rc = altp2m_init_helper(d, idx);
 
-    altp2m_unlock(d);
+//    altp2m_unlock(d);
 
     return rc;
 }
@@ -562,7 +567,7 @@ void altp2m_flush(struct domain *d)
      */
     ASSERT(!altp2m_active(d));
 
-    altp2m_lock(d);
+//    altp2m_lock(d);
 
     for ( i = 0; i < MAX_ALTP2M; i++ )
     {
@@ -586,7 +591,7 @@ void altp2m_flush(struct domain *d)
         read_unlock(&p2m->lock);
     }
 
-    altp2m_unlock(d);
+//    altp2m_unlock(d);
 }
 
 int altp2m_destroy_by_id(struct domain *d, unsigned int idx)
