@@ -291,6 +291,9 @@ struct arch_vcpu
     struct vtimer phys_timer;
     struct vtimer virt_timer;
     bool_t vtimer_initialized;
+
+    /* Alternate p2m index */
+    uint16_t ap2m_idx;
 }  __cacheline_aligned;
 
 void vcpu_show_execution_state(struct vcpu *);
