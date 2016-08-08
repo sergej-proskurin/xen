@@ -47,31 +47,6 @@ static bool_t p2m_mapping(lpae_t pte)
     return p2m_valid(pte) && !pte.p2m.table;
 }
 
-static inline void p2m_write_lock(struct p2m_domain *p2m)
-{
-    write_lock(&p2m->lock);
-}
-
-static inline void p2m_write_unlock(struct p2m_domain *p2m)
-{
-    write_unlock(&p2m->lock);
-}
-
-static inline void p2m_read_lock(struct p2m_domain *p2m)
-{
-    read_lock(&p2m->lock);
-}
-
-static inline void p2m_read_unlock(struct p2m_domain *p2m)
-{
-    read_unlock(&p2m->lock);
-}
-
-static inline int p2m_is_locked(struct p2m_domain *p2m)
-{
-    return rw_is_locked(&p2m->lock);
-}
-
 void p2m_dump_info(struct domain *d)
 {
     struct p2m_domain *p2m = p2m_get_hostp2m(d);
