@@ -12,6 +12,27 @@
 
 #define paddr_bits PADDR_BITS
 
+#define p2m_switch_vttbr_and_get_flags(ovttbr, nvttbr, flags)       \
+({                                                                  \
+     ovttbr = READ_SYSREG64(VTTBR_EL2);                             \
+     if ( ovttbr != nvttbr )                                        \
+     {                                                              \
+        local_irq_save(flags);                                      \
+        WRITE_SYSREG64(nvttbr, VTTBR_EL2);                          \
+        isb();                                                      \
+     }                                                              \
+})
+
+#define p2m_restore_vttbr_and_set_flags(ovttbr, flags)              \
+({                                                                  \
+     if ( ovttbr != READ_SYSREG64(VTTBR_EL2) )                      \
+     {                                                              \
+        WRITE_SYSREG64(ovttbr, VTTBR_EL2);                          \
+        isb();                                                      \
+        local_irq_restore(flags);                                   \
+     }                                                              \
+})
+
 /* Holds the bit size of IPAs in p2m tables.  */
 extern unsigned int p2m_ipa_bits;
 
