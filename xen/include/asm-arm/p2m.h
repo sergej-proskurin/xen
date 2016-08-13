@@ -182,6 +182,13 @@ void p2m_dump_info(struct domain *d);
 /* Look up the MFN corresponding to a domain's GFN. */
 mfn_t p2m_lookup(struct domain *d, gfn_t gfn, p2m_type_t *t);
 
+/*
+ * Lookup the MFN, memory type, access rights, and page table level
+ * corresponding to a domain's GFN.
+ */
+mfn_t p2m_lookup_attr(struct p2m_domain *p2m, gfn_t gfn, p2m_type_t *t,
+                      unsigned int *level, xenmem_access_t *xma);
+
 /* Remove an altp2m view's entry. */
 int remove_altp2m_entry(struct domain *d, struct p2m_domain *p2m,
                         gfn_t gfn, mfn_t mfn, unsigned int level);

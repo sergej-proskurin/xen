@@ -270,6 +270,18 @@ mfn_t p2m_lookup(struct domain *d, gfn_t gfn, p2m_type_t *t)
     return ret;
 }
 
+mfn_t p2m_lookup_attr(struct p2m_domain *p2m, gfn_t gfn, p2m_type_t *t,
+                      unsigned int *level, xenmem_access_t *xma)
+{
+    mfn_t ret;
+
+    p2m_read_lock(p2m);
+    ret = __p2m_lookup(p2m, gfn, t, level, xma);
+    p2m_read_unlock(p2m);
+
+    return ret;
+}
+
 int guest_physmap_mark_populate_on_demand(struct domain *d,
                                           unsigned long gfn,
                                           unsigned int order)
