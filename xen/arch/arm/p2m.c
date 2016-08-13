@@ -1293,6 +1293,50 @@ void guest_physmap_remove_page(struct domain *d,
     p2m_remove_mapping(d, p2m_get_hostp2m(d), gfn, (1 << page_order), mfn);
 }
 
+int remove_altp2m_entry(struct domain *d, struct p2m_domain *ap2m,
+                        gfn_t gfn, mfn_t mfn, unsigned int level)
+{
+    paddr_t size = level_sizes[level];
+    paddr_t mask = level_masks[level];
+    paddr_t gpa = pfn_to_paddr(gfn_x(gfn));
+    paddr_t maddr = pfn_to_paddr(mfn_x(mfn));
+    unsigned long nr = paddr_to_pfn(size);
+
+    ASSERT(p2m_is_altp2m(ap2m));
+
+    gfn = _gfn(paddr_to_pfn(gpa & mask));
+    mfn = _mfn(paddr_to_pfn(maddr & mask));
+
+    return p2m_remove_mapping(d, ap2m, gfn, nr, mfn);
+}
+
+int modify_altp2m_entry(struct domain *d, struct p2m_domain *ap2m,
+                        gfn_t gfn, mfn_t mfn, unsigned int level,
+                        p2m_type_t t, p2m_access_t a)
+{
+    paddr_t size = level_sizes[level];
+    paddr_t mask = level_masks[level];
+    paddr_t gpa = pfn_to_paddr(gfn_x(gfn));
+    paddr_t maddr = pfn_to_paddr(mfn_x(mfn));
+    unsigned long nr = paddr_to_pfn(size);
+
+    ASSERT(p2m_is_altp2m(ap2m));
+
+    gfn = _gfn(paddr_to_pfn(gpa & mask));
+    mfn = _mfn(paddr_to_pfn(maddr & mask));
+
+    return apply_p2m_changes(d, ap2m, INSERT, gfn, nr, mfn, 0, t, a);
+}
+
+int modify_altp2m_range(struct domain *d, struct p2m_domain *ap2m,
+                        gfn_t sgfn, unsigned long nr, mfn_t smfn,
+                        uint32_t m, p2m_type_t t, p2m_access_t a)
+{
+    ASSERT(p2m_is_altp2m(ap2m));
+
+    return apply_p2m_changes(d, ap2m, INSERT, sgfn, nr, smfn, m, t, a);
+}
+
 static int p2m_alloc_table(struct p2m_domain *p2m)
 {
     struct page_info *page;

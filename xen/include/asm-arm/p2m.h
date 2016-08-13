@@ -182,6 +182,20 @@ void p2m_dump_info(struct domain *d);
 /* Look up the MFN corresponding to a domain's GFN. */
 mfn_t p2m_lookup(struct domain *d, gfn_t gfn, p2m_type_t *t);
 
+/* Remove an altp2m view's entry. */
+int remove_altp2m_entry(struct domain *d, struct p2m_domain *p2m,
+                        gfn_t gfn, mfn_t mfn, unsigned int level);
+
+/* Modify an altp2m view's entry or its attributes. */
+int modify_altp2m_entry(struct domain *d, struct p2m_domain *p2m,
+                        gfn_t gfn, mfn_t mfn, unsigned int level,
+                        p2m_type_t t, p2m_access_t a);
+
+/* Modify an altp2m view's range of entries or their attributes. */
+int modify_altp2m_range(struct domain *d, struct p2m_domain *p2m,
+                        gfn_t sgfn, unsigned long nr, mfn_t smfn,
+                        uint32_t mask, p2m_type_t t, p2m_access_t a);
+
 /* Clean & invalidate caches corresponding to a region of guest address space */
 int p2m_cache_flush(struct domain *d, gfn_t start, unsigned long nr);
 
