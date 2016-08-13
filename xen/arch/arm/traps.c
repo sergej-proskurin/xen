@@ -51,6 +51,10 @@
 #include <asm/vgic.h>
 #include <asm/vtimer.h>
 
+#include "decode.h"
+
+#include <asm/altp2m.h>
+
 /* The base of the stack must always be double-word aligned, which means
  * that both the kernel half of struct cpu_user_regs (which is pushed in
  * entry.S) and struct cpu_info (which lives at the bottom of a Xen
@@ -1983,6 +1987,14 @@ static void do_trap_stage2_abort_guest(struct cpu_user_regs *regs,
                 break;
             }
         }
+
+        /*
+         * The guest shall retry accessing the page if the altp2m handler
+         * succeeds. Otherwise, we continue injecting an instruction/data abort
+         * exception.
+         */
+        if ( altp2m_lazy_copy(current, gaddr_to_gfn(gpa)) )
+            return;
 
         /*
          * The PT walk may have failed because someone was playing
