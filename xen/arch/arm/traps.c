@@ -48,6 +48,8 @@
 #include <asm/vgic.h>
 #include <asm/cpuerrata.h>
 
+#include <asm/altp2m.h>
+
 /* The base of the stack must always be double-word aligned, which means
  * that both the kernel half of struct cpu_user_regs (which is pushed in
  * entry.S) and struct cpu_info (which lives at the bottom of a Xen
@@ -2397,6 +2399,24 @@ static inline bool hpfar_is_valid(bool s1ptw, uint8_t fsc)
     return s1ptw || (fsc == FSC_FLT_TRANS && !check_workaround_834220());
 }
 
+static bool_t handle_altp2m(struct vcpu *v,
+                            paddr_t gpa,
+                            struct npfec npfec)
+{
+    bool_t rc = false;
+
+    if ( altp2m_active(v->domain) )
+        /*
+         * Copy the mapping of the faulting address into the currently
+         * active altp2m view. Return true on success or if the particular
+         * mapping has already been lazily copied to the currently active
+         * altp2m view by another vcpu. Return false otherwise.
+         */
+        rc = altp2m_lazy_copy(v, _gfn(paddr_to_pfn(gpa)), npfec);
+
+    return rc;
+}
+
 static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
                                       const union hsr hsr)
 {
@@ -2430,6 +2450,16 @@ static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
 
     switch ( fsc )
     {
+    case FSC_FLT_TRANS:
+        /*
+         * The guest shall retry accessing the page if the altp2m handler
+         * succeeds. Otherwise, we continue injecting an instruction abort
+         * exception.
+         */
+        if ( handle_altp2m(current, gpa, npfec) )
+            return;
+
+        break;
     case FSC_FLT_PERM:
         rc = p2m_mem_access_check(gpa, gva, npfec);
 
@@ -2477,11 +2507,19 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
     {
     case FSC_FLT_TRANS:
         if ( dabt.s1ptw )
-            goto bad_data_abort;
+            /*
+             * Faults on the stage 2 translation of an access for a stage 1
+             * translation table walk must be handled if altp2m is active.
+             */
+            goto altp2m_handle;
 
         /* XXX: Decode the instruction if ISS is not valid */
         if ( !dabt.valid )
-            goto bad_data_abort;
+            /*
+             * Stage 2 aborts on a stage 1 translation table lookup sets
+             * dabt.valid to zero and must be handled if altp2m is active.
+             */
+            goto altp2m_handle;
 
         /*
          * Erratum 766422: Thumb store translation fault to Hypervisor may
@@ -2494,7 +2532,7 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
             if ( rc )
             {
                 gprintk(XENLOG_DEBUG, "Unable to decode instruction\n");
-                goto bad_data_abort;
+                goto altp2m_handle;
             }
         }
 
@@ -2503,6 +2541,15 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
             advance_pc(regs, hsr);
             return;
         }
+
+altp2m_handle:
+        /*
+         * The guest shall retry accessing the page if the altp2m handler succeeds.
+         * Otherwise, we continue injecting a data abort exception.
+         */
+        if ( handle_altp2m(current, info.gpa, npfec) )
+            return;
+
         break;
     case FSC_FLT_PERM:
         rc = p2m_mem_access_check(info.gpa, info.gva, npfec);
@@ -2516,7 +2563,6 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
                 hsr.bits, dabt.dfsc);
     }
 
-bad_data_abort:
     gdprintk(XENLOG_DEBUG, "HSR=0x%x pc=%#"PRIregister" gva=%#"PRIvaddr
              " gpa=%#"PRIpaddr"\n", hsr.bits, regs->pc, info.gva, info.gpa);
     inject_dabt_exception(regs, info.gva, hsr.len);
