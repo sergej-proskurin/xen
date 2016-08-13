@@ -52,6 +52,8 @@
 #include <asm/cpuerrata.h>
 #include <asm/acpi.h>
 
+#include <asm/altp2m.h>
+
 /* The base of the stack must always be double-word aligned, which means
  * that both the kernel half of struct cpu_user_regs (which is pushed in
  * entry.S) and struct cpu_info (which lives at the bottom of a Xen
@@ -2634,6 +2636,14 @@ static void do_trap_instr_abort_guest(struct cpu_user_regs *regs,
     }
     case FSC_FLT_TRANS:
         /*
+         * The guest shall retry accessing the page if the altp2m handler
+         * succeeds. Otherwise, we continue injecting an instruction abort
+         * exception.
+         */
+        if ( altp2m_lazy_copy(current, _gfn(paddr_to_pfn(gpa))) )
+            return;
+
+        /*
          * The PT walk may have failed because someone was playing
          * with the Stage-2 page table. Walk the Stage-2 PT to check
          * if the entry exists. If it's the case, return to the guest
@@ -2772,6 +2782,13 @@ static void do_trap_data_abort_guest(struct cpu_user_regs *regs,
             advance_pc(regs, hsr);
             return;
         }
+
+        /*
+         * The guest shall retry accessing the page if the altp2m handler
+         * succeeds. Otherwise, we continue injecting a data abort exception.
+         */
+        if ( altp2m_lazy_copy(current, _gfn(paddr_to_pfn(info.gpa))) )
+            return;
 
         /*
          * The PT walk may have failed because someone was playing
