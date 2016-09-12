@@ -423,7 +423,7 @@ int altp2m_pair_vmid(struct domain *d,
     if ( idx1 == cur_idx || idx2 == cur_idx )
         domain_pause_except_self(d);
 
-    altp2m_reset(ap2m2);
+    p2m_flush_tlb(ap2m2);
     ap2m2->vmid = ap2m1->vmid;
     ap2m2->vttbr = page_to_maddr(ap2m2->root) | ((uint64_t)ap2m2->vmid & 0xff) << 48;
 
@@ -523,7 +523,56 @@ int altp2m_init_by_id(struct domain *d, unsigned int idx)
     return rc;
 }
 
-int altp2m_init_next_available(struct domain *d, uint16_t *idx)
+static int altp2m_duplicate_hostp2m(struct domain *d, uint16_t idx)
+{
+    struct p2m_domain *ap2m;
+    struct p2m_domain *hp2m = p2m_get_hostp2m(d);
+    p2m_type_t p2mt;
+    p2m_access_t old_a;
+    mfn_t mfn;
+    gfn_t gfn;
+    unsigned int page_order = THIRD_ORDER;
+    int rc = -EINVAL;
+
+    if ( idx >= MAX_ALTP2M )
+        return -EINVAL;
+
+    if ( d->arch.altp2m_p2m[idx] == NULL )
+        return -EINVAL;
+
+    ap2m = d->arch.altp2m_p2m[idx];
+
+    p2m_read_lock(hp2m);
+
+    /* Duplicate hostp2m entries into the ap2m. */
+    for ( gfn = hp2m->lowest_mapped_gfn; gfn_x(gfn) < gfn_x(hp2m->max_mapped_gfn);
+          gfn = gfn_add(gfn, (1<<page_order)) )
+    {
+        /* Check if entry is part of the altp2m view. */
+        mfn = p2m_lookup_attr(ap2m, gfn, NULL, NULL, &page_order);
+        if ( !mfn_eq(mfn, INVALID_MFN) )
+            continue;
+
+        /* Check if entry is part of the hostp2m view. */
+        mfn = p2m_lookup_attr(hp2m, gfn, &p2mt, &old_a, &page_order);
+        if ( mfn_eq(mfn, INVALID_MFN) )
+            continue;
+
+        /* Populate altp2m entry with the attributes of the hostp2m entry. */
+        rc = modify_altp2m_entry(ap2m, gfn, mfn, p2mt, old_a, page_order);
+        if ( rc < 0 )
+        {
+            rc = -ESRCH;
+            goto out;
+        }
+    }
+
+out:
+    p2m_read_unlock(hp2m);
+
+    return rc;
+}
+int altp2m_init_next_available(struct domain *d, uint16_t *idx, bool duplicate)
 {
     int rc = -EINVAL;
     uint16_t i;
@@ -537,6 +586,9 @@ int altp2m_init_next_available(struct domain *d, uint16_t *idx)
 
         rc = altp2m_init_helper(d, i);
         *idx = i;
+
+        if ( duplicate )
+            rc = altp2m_duplicate_hostp2m(d, i);
 
         break;
     }

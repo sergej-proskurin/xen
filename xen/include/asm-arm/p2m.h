@@ -262,6 +262,9 @@ int p2m_init_one(struct domain *d, struct p2m_domain *p2m);
 /* Release resources held by the p2m structure. */
 void p2m_teardown_one(struct p2m_domain *p2m);
 
+/* Flush TLBs of the given p2m. */
+void p2m_flush_tlb(struct p2m_domain *p2m);
+
 /*
  * P2M rwlock helpers.
  */

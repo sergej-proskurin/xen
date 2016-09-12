@@ -93,8 +93,6 @@ void p2m_write_lock(struct p2m_domain *p2m)
     write_lock(&p2m->lock);
 }
 
-static void p2m_flush_tlb(struct p2m_domain *p2m);
-
 void p2m_write_unlock(struct p2m_domain *p2m)
 {
     if ( p2m->need_flush )
@@ -216,7 +214,7 @@ void p2m_restore_state(struct vcpu *n)
     isb();
 }
 
-static void p2m_flush_tlb(struct p2m_domain *p2m)
+void p2m_flush_tlb(struct p2m_domain *p2m)
 {
     unsigned long flags = 0;
     uint64_t ovttbr = READ_SYSREG64(VTTBR_EL2);
