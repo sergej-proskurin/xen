@@ -144,6 +144,7 @@ struct arch_domain
 
     /* Monitor options */
     struct {
+        uint8_t singlestep_enabled      : 1;
         uint8_t privileged_call_enabled : 1;
     } monitor;
 
@@ -294,6 +295,7 @@ struct arch_vcpu
 
     /* Alternate p2m index */
     uint16_t ap2m_idx;
+    bool_t single_step;
 }  __cacheline_aligned;
 
 void vcpu_show_execution_state(struct vcpu *);

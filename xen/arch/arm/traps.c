@@ -163,7 +163,7 @@ void init_traps(void)
     WRITE_SYSREG((vaddr_t)hyp_traps_vector, VBAR_EL2);
 
     /* Trap Debug and Performance Monitor accesses */
-    WRITE_SYSREG(HDCR_TDRA|HDCR_TDOSA|HDCR_TDA|HDCR_TPM|HDCR_TPMCR,
+    WRITE_SYSREG(HDCR_TDRA|HDCR_TDOSA|HDCR_TDA|HDCR_TPM|HDCR_TPMCR|HDCR_TDE,
                  MDCR_EL2);
 
     /* Trap CP15 c15 used for implementation defined registers */
@@ -1332,6 +1332,20 @@ int do_bug_frame(struct cpu_user_regs *regs, vaddr_t pc)
 }
 
 #ifdef CONFIG_ARM_64
+static void do_trap_ss(struct cpu_user_regs *regs, const union hsr hsr)
+{
+    int rc = 0;
+
+    /* We don't support single-stepping of EL2, yet. */
+    BUG_ON(hyp_mode(regs));
+
+    if ( current->domain->arch.monitor.singlestep_enabled )
+        rc = monitor_ss();
+
+//    if ( rc != 1 )
+//        inject_undef_exception(regs, hsr);
+}
+
 static void do_trap_brk(struct cpu_user_regs *regs, const union hsr hsr)
 {
     /* HCR_EL2.TGE and MDCR_EL2.TDE are not set so we never receive
@@ -2942,6 +2956,18 @@ asmlinkage void do_trap_guest_sync(struct cpu_user_regs *regs)
         do_trap_data_abort_guest(regs, hsr);
         break;
 
+#ifdef CONFIG_ARM_64
+    case HSR_EC_SS_LOWER_EL:
+        perfc_incr(trap_ss);
+        do_trap_ss(regs, hsr);
+        break;
+
+    case HSR_EC_SS_CURR_EL:
+        perfc_incr(trap_ss);
+        do_trap_ss(regs, hsr);
+        break;
+#endif
+
     default:
         gprintk(XENLOG_WARNING,
                 "Unknown Guest Trap. HSR=0x%x EC=0x%x IL=%x Syndrome=0x%"PRIx32"\n",
@@ -2999,6 +3025,34 @@ asmlinkage void do_trap_fiq(struct cpu_user_regs *regs)
 
 asmlinkage void leave_hypervisor_tail(void)
 {
+    uint32_t mdscr;
+    struct vcpu *v = current;
+    struct cpu_user_regs *regs = guest_cpu_user_regs();
+
+#define MDSCR_EL1_SS    (1 << 0)
+#define SPSR_EL2_SS     (1 << 21)
+
+    /*
+     * TODO: We need to dynamically activate/deactivate routing of debug
+     * exceptions to the hypervisor. The current solution simply sets the
+     * MDCR_EL2.TDE bit without disabling it.
+     */
+
+    mdscr = READ_SYSREG(MDSCR_EL1);
+
+    if ( unlikely(v->arch.single_step) )
+    {
+        mdscr |= MDSCR_EL1_SS;
+        regs->cpsr |= SPSR_EL2_SS;
+    }
+    else
+    {
+        mdscr &= ~MDSCR_EL1_SS;
+        regs->cpsr &= ~SPSR_EL2_SS;
+    }
+
+    WRITE_SYSREG(mdscr, MDSCR_EL1);
+
     while (1)
     {
         local_irq_disable();
