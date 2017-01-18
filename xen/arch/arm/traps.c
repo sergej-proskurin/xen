@@ -161,7 +161,7 @@ void init_traps(void)
     WRITE_SYSREG((vaddr_t)hyp_traps_vector, VBAR_EL2);
 
     /* Trap Debug and Performance Monitor accesses */
-    WRITE_SYSREG(HDCR_TDRA|HDCR_TDOSA|HDCR_TDA|HDCR_TPM|HDCR_TPMCR,
+    WRITE_SYSREG(HDCR_TDRA|HDCR_TDOSA|HDCR_TDA|HDCR_TPM|HDCR_TPMCR|HDCR_TDE,
                  MDCR_EL2);
 
     /* Trap CP15 c15 used for implementation defined registers */
@@ -1330,6 +1330,22 @@ int do_bug_frame(struct cpu_user_regs *regs, vaddr_t pc)
 }
 
 #ifdef CONFIG_ARM_64
+static void do_trap_ss(struct cpu_user_regs *regs, const union hsr hsr)
+{
+    int rc = 0;
+
+    /* We don't support single-stepping of EL2, yet. */
+    BUG_ON(hyp_mode(regs));
+
+    if ( current->domain->arch.monitor.singlestep_enabled )
+        rc = monitor_ss();
+
+    if ( rc != 1 )
+        inject_undef_exception(regs, hsr);
+
+    /* TODO: Do we need to increment the pc? */
+}
+
 static void do_trap_brk(struct cpu_user_regs *regs, const union hsr hsr)
 {
     /* HCR_EL2.TGE and MDCR_EL2.TDE are not set so we never receive
@@ -2942,6 +2958,16 @@ asmlinkage void do_trap_hyp_sync(struct cpu_user_regs *regs)
     switch ( hsr.ec )
     {
 #ifdef CONFIG_ARM_64
+    case HSR_EC_SS_LOWER_EL:
+        perfc_incr(trap_ss);
+        do_trap_ss(regs, hsr);
+        break;
+
+    case HSR_EC_SS_CURR_EL:
+        perfc_incr(trap_ss);
+        do_trap_ss(regs, hsr);
+        break;
+
     case HSR_EC_BRK:
         do_trap_brk(regs, hsr);
         break;
