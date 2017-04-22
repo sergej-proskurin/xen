@@ -174,6 +174,9 @@
 #define TCR_TG0_64K     (_AC(0x1,UL)<<14)
 #define TCR_TG0_16K     (_AC(0x2,UL)<<14)
 
+#define TCR_T0SZ_SHIFT  0
+#define TCR_T1SZ_SHIFT  16
+
 #ifdef CONFIG_ARM_64
 
 #define TCR_PS(x)       ((x)<<16)
@@ -181,9 +184,13 @@
 
 #define TCR_RES1        (_AC(1,UL)<<31|_AC(1,UL)<<23)
 
+#define TCR_SZ_MASK     0x3f
+
 #else
 
 #define TCR_RES1        (_AC(1,UL)<<31)
+
+#define TCR_SZ_MASK     0x7
 
 #endif
 
