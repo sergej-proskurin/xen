@@ -166,6 +166,9 @@
  */
 #define TCR_SZ_MASK     (_AC(0x3f,UL)<<0)
 
+#define TCR_EPD0        (_AC(0x1,UL)<<7)
+#define TCR_EPD1        (_AC(0x1,UL)<<23)
+
 #define TCR_IRGN0_NC    (_AC(0x0,UL)<<8)
 #define TCR_IRGN0_WBWA  (_AC(0x1,UL)<<8)
 #define TCR_IRGN0_WT    (_AC(0x2,UL)<<8)
@@ -183,11 +186,29 @@
 #define TCR_TG0_4K      (_AC(0x0,UL)<<14)
 #define TCR_TG0_64K     (_AC(0x1,UL)<<14)
 #define TCR_TG0_16K     (_AC(0x2,UL)<<14)
+#define TCR_TG0_MASK    (_AC(0x3,UL)<<14)
+#define TCR_TG0_SHIFT   14
+
+#define TCR_TG1_16K     (_AC(0x1,UL)<<30)
+#define TCR_TG1_4K      (_AC(0x2,UL)<<30)
+#define TCR_TG1_64K     (_AC(0x3,UL)<<30)
+#define TCR_TG1_MASK    (_AC(0x3,UL)<<30)
+#define TCR_TG1_SHIFT   30
+
+#define TCR_IPS_32bit   (_AC(0x0,ULL)<<32)
+#define TCR_IPS_36bit   (_AC(0x1,ULL)<<32)
+#define TCR_IPS_40bit   (_AC(0x2,ULL)<<32)
+#define TCR_IPS_42bit   (_AC(0x3,ULL)<<32)
+#define TCR_IPS_44bit   (_AC(0x4,ULL)<<32)
+#define TCR_IPS_48bit   (_AC(0x5,ULL)<<32)
+#define TCR_IPS_MASK    (_AC(0x7,ULL)<<32)
+#define TCR_IPS_SHIFT   (32)
 
 #ifdef CONFIG_ARM_64
 
 #define TCR_PS(x)       ((x)<<16)
-#define TCR_TBI         (_AC(0x1,UL)<<20)
+#define TCR_TBI0        (_AC(0x1,UL)<<37)
+#define TCR_TBI1        (_AC(0x1,UL)<<38)
 
 #define TCR_RES1        (_AC(1,UL)<<31|_AC(1,UL)<<23)
 
