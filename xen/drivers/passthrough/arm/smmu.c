@@ -535,7 +535,6 @@ static struct iommu_group *iommu_group_get(struct device *dev)
 
 #define TTBCR_T1SZ_SHIFT		16
 #define TTBCR_T0SZ_SHIFT		0
-#define TTBCR_SZ_MASK			0xf
 
 #define TTBCR2_SEP_SHIFT		15
 #define TTBCR2_SEP_MASK			0x7

@@ -94,6 +94,8 @@
 #define TTBCR_N_2KB  _AC(0x03,U)
 #define TTBCR_N_1KB  _AC(0x04,U)
 
+#define TTBCR_SZ_MASK   0xf
+
 /* SCTLR System Control Register. */
 /* HSCTLR is a subset of this. */
 #define SCTLR_TE        (_AC(1,U)<<30)
