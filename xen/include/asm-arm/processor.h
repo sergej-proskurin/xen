@@ -157,6 +157,8 @@
 /* TCR: Stage 1 Translation Control */
 
 #define TCR_T0SZ(x)     ((x)<<0)
+#define TCR_T0SZ_SHIFT  0
+#define TCR_T1SZ_SHIFT  16
 
 #define TCR_IRGN0_NC    (_AC(0x0,UL)<<8)
 #define TCR_IRGN0_WBWA  (_AC(0x1,UL)<<8)
@@ -182,6 +184,8 @@
 #define TCR_TBI         (_AC(0x1,UL)<<20)
 
 #define TCR_RES1        (_AC(1,UL)<<31|_AC(1,UL)<<23)
+
+#define TCR_SZ_MASK     (_AC(0x3f,UL)<<0)
 
 #else
 
