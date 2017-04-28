@@ -155,6 +155,16 @@
 /* TCR: Stage 1 Translation Control */
 
 #define TCR_T0SZ(x)     ((x)<<0)
+#define TCR_T0SZ_SHIFT  0
+#define TCR_T1SZ_SHIFT  16
+
+/*
+ * According to ARM DDI 0487A.g, TCR_EL1.{T0SZ,T1SZ} (Aarch64, Section D7-2021)
+ * comprises 6 bits and TTBCR.{T0SZ,T1SZ} (Aarch32, Section G6-4624) comprises
+ * 3 bits following another 3 bits for RES0. Thus, the mask for both registers
+ * should be 0x3f.
+ */
+#define TCR_SZ_MASK     (_AC(0x3f,UL)<<0)
 
 #define TCR_IRGN0_NC    (_AC(0x0,UL)<<8)
 #define TCR_IRGN0_WBWA  (_AC(0x1,UL)<<8)
