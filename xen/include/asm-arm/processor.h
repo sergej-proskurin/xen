@@ -94,7 +94,7 @@
 #define TTBCR_N_2KB  _AC(0x03,U)
 #define TTBCR_N_1KB  _AC(0x04,U)
 
-#define TTBCR_SZ_MASK   0xf
+#define TTBCR_SZ_MASK   _AC(0x7,UL)
 
 /* SCTLR System Control Register. */
 /* HSCTLR is a subset of this. */
