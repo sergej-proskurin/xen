@@ -20,6 +20,7 @@
 #include <xen/monitor.h>
 #include <xen/sched.h>
 #include <xen/vm_event.h>
+#include <xen/domain_page.h>
 #include <public/vm_event.h>
 #include <asm/event.h>
 
@@ -90,6 +91,129 @@ static int __p2m_get_mem_access(struct domain *d, gfn_t gfn,
     return 0;
 }
 
+static int
+p2m_gva_to_ipa(struct p2m_domain *p2m, vaddr_t gva,
+               paddr_t *ipa, unsigned int flags)
+{
+    int level=0, t0_sz, t1_sz;
+    unsigned long t0_max, t1_min;
+    lpae_t pte, *table;
+    mfn_t root_mfn;
+    uint64_t ttbr;
+    uint32_t sctlr = READ_SYSREG(SCTLR_EL1);
+    register_t ttbcr = READ_SYSREG(TCR_EL1);
+    struct domain *d = p2m->domain;
+
+    const unsigned int offsets[4] = {
+#ifdef CONFIG_ARM_64
+        zeroeth_table_offset(gva),
+#endif
+        first_table_offset(gva),
+        second_table_offset(gva),
+        third_table_offset(gva)
+    };
+
+    const paddr_t masks[4] = {
+#ifdef CONFIG_ARM_64
+        ZEROETH_SIZE - 1,
+#endif
+        FIRST_SIZE - 1,
+        SECOND_SIZE - 1,
+        THIRD_SIZE - 1
+    };
+
+    /* If the MMU is disabled, there is no need to translate the gva. */
+    if ( !(sctlr & SCTLR_M) )
+    {
+        *ipa = gva;
+
+        return 0;
+    }
+
+    if ( is_32bit_domain(d) )
+    {
+        /*
+         * XXX: We do not support 32-bit domain translation table walks for
+         * domains using the short-descriptor translation table format, yet.
+         */
+        if ( !(ttbcr & TTBCR_EAE) )
+            return -EFAULT;
+
+#ifdef CONFIG_ARM_64
+        level = 1;
+#endif
+    }
+
+#ifdef CONFIG_ARM_64
+    if ( is_64bit_domain(d) )
+    {
+        /* Get the max GVA that can be translated by TTBR0. */
+        t0_sz = (ttbcr >> TCR_T0SZ_SHIFT) & TCR_SZ_MASK;
+        t0_max = (1UL << (64 - t0_sz)) - 1;
+
+        /* Get the min GVA that can be translated by TTBR1. */
+        t1_sz = (ttbcr >> TCR_T1SZ_SHIFT) & TCR_SZ_MASK;
+        t1_min = ~0UL - (1UL << (64 - t1_sz)) + 1;
+    }
+    else
+#endif
+    {
+        /* Get the max GVA that can be translated by TTBR0. */
+        t0_sz = (ttbcr >> TCR_T0SZ_SHIFT) & TTBCR_SZ_MASK;
+        t0_max = (1U << (32 - t0_sz)) - 1;
+
+        /* Get the min GVA that can be translated by TTBR1. */
+        t1_sz = (ttbcr >> TCR_T1SZ_SHIFT) & TTBCR_SZ_MASK;
+        t1_min = ~0U - (1U << (32 - t1_sz)) + 1;
+    }
+
+    if ( t0_max >= gva )
+        /* Use TTBR0 for GVA to IPA translation. */
+        ttbr = READ_SYSREG64(TTBR0_EL1);
+    else if ( t1_min <= gva )
+        /* Use TTBR1 for GVA to IPA translation. */
+        ttbr = READ_SYSREG64(TTBR1_EL1);
+    else
+        /* GVA out of bounds of TTBR(0|1). */
+        return -EFAULT;
+
+    /* Bits [63..48] might be used by an ASID. */
+    root_mfn = p2m_lookup(d, _gfn(paddr_to_pfn(ttbr & ((1ULL<<48)-1))), NULL);
+
+    /* Check, whether TTBR holds a valid address. */
+    if ( mfn_eq(root_mfn, INVALID_MFN) )
+        return -EFAULT;
+
+    table = map_domain_page(root_mfn);
+
+    for ( ; ; level++ )
+    {
+        pte = table[offsets[level]];
+
+        if ( level == 3 || !pte.walk.valid || !pte.walk.table )
+            break;
+
+        unmap_domain_page(table);
+
+        root_mfn = p2m_lookup(d, _gfn(pte.walk.base), NULL);
+        table = map_domain_page(root_mfn);
+    }
+
+    unmap_domain_page(table);
+
+    if ( !pte.walk.valid )
+        return -EFAULT;
+
+    /* Make sure the entry holds the requested access attributes. */
+    if ( ((flags & GV2M_WRITE) == GV2M_WRITE) && pte.pt.ro )
+        return -EFAULT;
+
+    *ipa = pfn_to_paddr(pte.walk.base) | (gva & masks[level]);
+
+    return 0;
+}
+
+
 /*
  * If mem_access is in use it might have been the reason why get_page_from_gva
  * failed to fetch the page, as it uses the MMU for the permission checking.
@@ -109,9 +233,23 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag,
     struct page_info *page = NULL;
     struct p2m_domain *p2m = &v->domain->arch.p2m;
 
+    ASSERT(p2m->mem_access_enabled);
+
     rc = gva_to_ipa(gva, &ipa, flag);
+
+    /*
+     * In case mem_access is active, hardware-based gva_to_ipa translation
+     * might fail. Since gva_to_ipa uses the guest's translation tables, access
+     * to which might be restricted by the active VTTBR, we perform a gva to
+     * ipa translation in software.
+     */
     if ( rc < 0 )
-        goto err;
+        if ( p2m_gva_to_ipa(p2m, gva, &ipa, flag) < 0 )
+            /*
+             * The software gva to ipa translation can still fail, if the the
+             * gva is not mapped or does not hold the requested access rights.
+             */
+            goto err;
 
     gfn = _gfn(paddr_to_pfn(ipa));
 
