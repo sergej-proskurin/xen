@@ -205,6 +205,17 @@ typedef union {
     lpae_walk_t walk;
 } lpae_t;
 
+typedef struct __packed {
+    unsigned int dt:2;          /* Descriptor type */
+    unsigned int pad1:8;
+    unsigned int base:22;       /* Base address of block or next table */ 
+} pte_walk_t;
+
+typedef union {
+    uint32_t bits;
+    pte_walk_t walk;
+} pte_t;
+
 /* Standard entry type that we'll use to build Xen's own pagetables.
  * We put the same permissions at every level, because they're ignored
  * by the walker in non-leaf entries. */

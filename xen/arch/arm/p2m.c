@@ -1544,20 +1544,157 @@ void __init setup_virt_paging(void)
     smp_call_function(setup_virt_paging_one, (void *)val, 1);
 }
 
-static int64_t __p2m_walk_gpt_lpae(struct p2m_domain *p2m,
-                                   vaddr_t gva, paddr_t *ipa)
+/*
+ * The function __p2m_walk_gpt_sd translates a given GVA into an IPA using the
+ * Short-Descriptor translation table format of. This function assumes that the
+ * domain is running on the currently active VCPU.
+ */
+static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
+                            vaddr_t gva, paddr_t *ipa)
 {
-    int t0_sz, t1_sz, disabled = 0;
+    int disabled = 1;
+    uint64_t mask;
+    pte_t pte, *table;
+    mfn_t mfn;
+    int32_t ttbr;
+    register_t ttbcr = READ_SYSREG(TCR_EL1);
+    unsigned int level = 0, n = ttbcr & TTBCR_N_MASK;
+    struct domain *d = p2m->domain;
+
+    const paddr_t offsets[2] = {
+        ((paddr_t)(gva >> 20) & ((1ULL << (12 - n)) - 1)),
+        ((paddr_t)(gva >> 12) & ((1ULL << 8) - 1))
+    };
+
+    /* TODO: Do the same (31 bit) with LPAE code!! */
+    mask = ((1ULL << REGISTER_WIDTH_32_BIT) - 1) &
+           ~((1ULL << ((REGISTER_WIDTH_32_BIT - 1) - n)) - 1);
+
+    if ( n == 0 || !(gva & mask) )
+    {
+        /* Use TTBR0 for GVA to IPA translation. */
+        ttbr = READ_SYSREG64(TTBR0_EL1);
+
+        /* If TTBCR.PD0 is set, translations using TTBR0 are disabled. */
+        disabled = ( ttbcr & TTBCR_PD0 ) ? 1 : 0;
+    }
+    else
+    {
+        /* Use TTBR1 for GVA to IPA translation. */
+        ttbr = READ_SYSREG64(TTBR1_EL1);
+
+        /* If TTBCR.PD1 is set, translations using TTBR1 are disabled. */
+        disabled = ( ttbcr & TTBCR_PD1 ) ? 1 : 0;
+    }
+
+    if ( disabled )
+        return -EFAULT;
+
+    mask = (1ULL << (14 - n)) - 1;
+    mfn = p2m_lookup(d, _gfn(paddr_to_pfn(ttbr & ~mask)), NULL);
+
+    /* Check, whether TTBR holds a valid address. */
+    if ( mfn_eq(mfn, INVALID_MFN) )
+        return -EFAULT;
+
+    /*
+     * XXX: The 2nd level lookup table might comprise 4 concatenated 4K
+     * pages.  Check how to map concatenated tables at once.
+     */
+    table = map_domain_page(mfn);
+
+    /* Consider offset if n > 2. */
+    if ( n > 2 )
+        table = (pte_t *)((uint32_t)table | (uint32_t)(ttbr & mask));
+
+    pte = table[offsets[level]];
+
+    switch ( pte.walk.dt ) {
+    case 0: /* Invalid mapping. */
+        return -EFAULT;
+
+    case 1: /* Large or small page. */
+        level++;
+        mfn = p2m_lookup(d, _gfn(pte.walk.base >> 2), NULL);
+
+        unmap_domain_page(table);
+
+        /* Check, whether the pte holds a valid address. */
+        if ( mfn_eq(mfn, INVALID_MFN) )
+            return -EFAULT;
+
+        table = map_domain_page(mfn);
+        table = (pte_t *)((uint32_t)table | ((pte.walk.base & 0x3) << 10));
+
+        pte = table[offsets[level]];
+
+        if ( pte.walk.dt == 0 )
+            break;
+
+        if ( pte.walk.dt & 0x2 ) /* Small page. */
+        {
+            mask = (1ULL << PAGE_SHIFT_4K) - 1;
+            *ipa = (pte.bits & ~mask) | (gva & mask);
+        }
+        else /* Large page. */
+        {
+            mask = (1ULL << PAGE_SHIFT_64K) - 1;
+            *ipa = (pte.bits & ~mask) | (gva & mask);
+        }
+
+        break;
+
+    case 2: /* Section. */
+    case 3: /* Section or Supersection. */
+        if ( !(pte.bits & (1ULL << 18)) ) /* Section */
+        {
+            mask = (1ULL << 20) - 1;
+            *ipa = (pte.bits & ~mask) | (gva & mask);
+        }
+        else /* Supersection */
+        {
+            mask = (1ULL << 24) - 1;
+            *ipa = (pte.bits & ~mask) | (gva & mask); 
+            
+            mask = ((1ULL << 24) - 1) & ~((1ULL << 20) - 1);
+            *ipa |= (pte.bits & mask) << 32;
+
+            mask = ((1ULL << 9) - 1) & ~((1ULL << 5) - 1);
+            *ipa |= (pte.bits & mask) << 36;
+        }
+    }
+
+    unmap_domain_page(table);
+
+    if ( pte.walk.dt == 0 )
+        return -EFAULT;
+
+/* TEST */
+#if 0
+        printk("[ 2] __p2m_walk_gpt_sd: \n"
+               "                          ttbcr=0x%"PRIregister"\n"
+               "                          n=%d\n"
+               "                          gva=0x%"PRIvaddr"\n",
+               ttbcr, n, gva);
+#endif
+/* TEST END */
+
+    return pte.bits;
+}
+
+static int64_t __p2m_walk_gpt_ld(struct p2m_domain *p2m,
+                                 vaddr_t gva, paddr_t *ipa)
+{
+    int t0_sz, t1_sz, disabled = 1;
     unsigned int level;
-    /* Granule size of Aarch32 or ARMv7 architectures is always 4K, indexed by 0. */
-    unsigned int gran = 0;
+    unsigned int gran;
     unsigned int topbit = 0, input_size = 0, output_size;
     uint64_t ttbr = 0, mask, ips;
     register_t tcr = READ_SYSREG(TCR_EL1);
     struct domain *d = p2m->domain;
     lpae_t pte, *table;
     mfn_t mfn;
-    
+
     const vaddr_t offsets[4][3] = {
         {
 #ifdef CONFIG_ARM_64
@@ -1624,111 +1761,126 @@ static int64_t __p2m_walk_gpt_lpae(struct p2m_domain *p2m,
         LPAE_SHIFT_64K
     };
 
-    /* 
+    t0_sz = (tcr >> TCR_T0SZ_SHIFT) & TCR_SZ_MASK;
+    t1_sz = (tcr >> TCR_T1SZ_SHIFT) & TCR_SZ_MASK;
+
+    /*
      * Get the MSB number of the gva, according to "AddrTop" pseudocode
      * implementation in ARM DDI 0487A-g J11-5739.
      *
      * XXX: We do not check whether the 64bit domain uses a 32-bit EL0. In this
-     * case, we need to set topbit to 31, as well. 
+     * case, we need to set topbit to 31, as well.
      */
     if ( is_32bit_domain(d) )
-        topbit = 31;
+        topbit = TCR_TB_31;
 #ifdef CONFIG_ARM_64
     else if ( is_64bit_domain(d) )
     {
-        if ( ((gva & (1UL << 55)) && (tcr & TCR_TBI1)) ||
-             (!(gva & (1UL << 55)) && (tcr & TCR_TBI0)) )
-            topbit = 55;
+        if ( ((gva & (1UL << TCR_TB_55)) && (tcr & TCR_TBI1)) ||
+             (!(gva & (1UL << TCR_TB_55)) && (tcr & TCR_TBI0)) )
+            topbit = TCR_TB_55;
         else
-            topbit = 63;
+            topbit = TCR_TB_63;
+    }
+#endif
+
+#ifdef CONFIG_ARM_64
+    if ( is_64bit_domain(d) )
+    {
+        if ( (gva & (1UL << topbit)) == 0 )
+        {
+            input_size = REGISTER_WIDTH_64_BIT - t0_sz;
+
+            if ( input_size > TCR_IPS_MAX )
+                /* We limit the input_size to be max 48 bit. */
+                input_size = TCR_IPS_MAX;
+            else if ( input_size < TCR_IPS_MIN )
+                /* We limit the input_size to be max 25 bit. */
+                input_size = TCR_IPS_MIN;
+
+            /* Normalize granule size. */
+            switch ( tcr & TCR_TG0_MASK ) {
+            case TCR_TG0_16K:
+                gran = 1;
+                break;
+            case TCR_TG0_64K:
+                gran = 2;
+                break;
+            default:
+                gran = 0;
+            }
+
+            /* Use TTBR0 for GVA to IPA translation. */
+            ttbr = READ_SYSREG64(TTBR0_EL1);
+
+            /* If TCR.EPD0 is set, translations using TTBR0 are disabled. */
+            disabled = ( tcr & TCR_EPD0 ) ? 1 : 0;
+        }
+        else
+        {
+            input_size = REGISTER_WIDTH_64_BIT - t1_sz;
+
+            if ( input_size > TCR_IPS_MAX )
+                /* We limit the input_size to be max 48 bit. */
+                input_size = TCR_IPS_MAX;
+            else if ( input_size < TCR_IPS_MIN )
+                /* We limit the input_size to be max 25 bit. */
+                input_size = TCR_IPS_MIN;
+
+            /* Normalize granule size. */
+            switch ( tcr & TCR_TG1_MASK ) {
+            case TCR_TG1_16K:
+                gran = 1;
+                break;
+            case TCR_TG1_64K:
+                gran = 2;
+                break;
+            default:
+                gran = 0;
+            }
+
+            /* Use TTBR1 for GVA to IPA translation. */
+            ttbr = READ_SYSREG64(TTBR1_EL1);
+
+            /* If TCR.EPD1 is set, translations using TTBR1 are disabled. */
+            disabled = ( tcr & TCR_EPD1 ) ? 1 : 0;
+        }
     }
     else
 #endif
-    
-    t0_sz = (tcr >> TCR_T0SZ_SHIFT) & TCR_SZ_MASK;
-    t1_sz = (tcr >> TCR_T1SZ_SHIFT) & TCR_SZ_MASK;
-
-#ifdef CONFIG_ARM_64 
-    if ( (gva & (1UL << topbit)) == 0 )
-#else     
-    mask = ((1ULL << 32) - 1) & ~((1ULL << (32 - t0_sz)) - 1);
-    if ( t0_sz == 0 || !(gva & mask) )
-#endif
     {
-#ifdef CONFIG_ARM_64
-        input_size = 64 - t0_sz;
-#else
-        input_size = 32 - t0_sz;
-#endif
+        /* Granule size of Aarch32 or ARMv7 architectures is always 4K, indexed by 0. */
+        gran = 0;
 
-#ifdef CONFIG_ARM_64
-        if ( input_size > 48 )
-            /* We limit the input_size to be max 48 bit. */
-            input_size = 48;
-        else if ( input_size < 25 )
-            /* We limit the input_size to be max 25 bit. */
-            input_size = 25;
+        mask = ((1ULL << REGISTER_WIDTH_32_BIT) - 1) &
+               ~((1ULL << ((REGISTER_WIDTH_32_BIT - 1) - t0_sz)) - 1);
 
-        /* Normalize granule size. */
-        switch ( tcr & TCR_TG0_MASK ) {
-        case TCR_TG0_16K:
-            gran = 1;
-            break;
-        case TCR_TG0_64K:
-            gran = 2;
-            break;
-        default:
-            gran = 0;
+        if ( t0_sz == 0 || !(gva & mask) )
+        {
+            input_size = REGISTER_WIDTH_32_BIT - t0_sz;
+
+            /* Use TTBR0 for GVA to IPA translation. */
+            ttbr = READ_SYSREG64(TTBR0_EL1);
+
+            /* If TCR.EPD0 is set, translations using TTBR0 are disabled. */
+            disabled = ( tcr & TCR_EPD0 ) ? 1 : 0;
         }
-#endif
 
-        /* Use TTBR0 for GVA to IPA translation. */
-        ttbr = READ_SYSREG64(TTBR0_EL1);
-        
-        /* If TCR.EPD0 is set, translations using TTBR0 are disabled. */ 
-        disabled = ( tcr & TCR_EPD0 ) ? 1 : 0;
-    }
-#ifdef CONFIG_ARM_64
-    else
-#else
-    mask = ((1ULL << 32) - 1) & ~((1ULL << (32 - t1_sz)) - 1);
-    if ( ((t1_sz == 0) && !ttbr) || (gva & mask) == mask )
-#endif
-    {
-#ifdef CONFIG_ARM_64
-        input_size = 64 - t1_sz;
-#else
-        input_size = 32 - t1_sz;
-#endif
+        mask = ((1ULL << REGISTER_WIDTH_32_BIT) - 1) &
+               ~((1ULL << ((REGISTER_WIDTH_32_BIT - 1) - t1_sz)) - 1);
 
-#ifdef CONFIG_ARM_64
-        if ( input_size > 48 )
-            /* We limit the input_size to be max 48 bit. */
-            input_size = 48;
-        else if ( input_size < 25 )
-            /* We limit the input_size to be max 25 bit. */
-            input_size = 25;
+        if ( ((t1_sz == 0) && !ttbr) || (/*t1_sz &&*/ (gva & mask) == mask) )
+        {
+            input_size = REGISTER_WIDTH_32_BIT - t1_sz;
 
-        /* Normalize granule size. */
-        switch ( tcr & TCR_TG1_MASK ) {
-        case TCR_TG1_16K:
-            gran = 1;
-            break;
-        case TCR_TG1_64K:
-            gran = 2;
-            break;
-        default:
-            gran = 0;
+            /* Use TTBR1 for GVA to IPA translation. */
+            ttbr = READ_SYSREG64(TTBR1_EL1);
+
+            /* If TCR.EPD1 is set, translations using TTBR1 are disabled. */
+            disabled = ( tcr & TCR_EPD1 ) ? 1 : 0;
         }
-#endif
-
-        /* Use TTBR1 for GVA to IPA translation. */
-        ttbr = READ_SYSREG64(TTBR1_EL1);
-        
-        /* If TCR.EPD1 is set, translations using TTBR1 are disabled. */ 
-        disabled = ( tcr & TCR_EPD1 ) ? 1 : 0;
     }
-   
+
     if ( disabled )
         return -EFAULT;
 
@@ -1738,25 +1890,25 @@ static int64_t __p2m_walk_gpt_lpae(struct p2m_domain *p2m,
     if ( is_64bit_domain(d) )
     {
         /* Get the intermediate physical address size. */
-        ips = (tcr & TCR_IPS_MASK) >> TCR_IPS_SHIFT; 
+        ips = (tcr & TCR_IPS_MASK) >> TCR_IPS_SHIFT;
 
         switch (ips) {
-        case TCR_IPS_32bit:
+        case TCR_IPS_32_BIT:
             output_size = 32;
             break;
-        case TCR_IPS_36bit:
+        case TCR_IPS_36_BIT:
             output_size = 36;
             break;
-        case TCR_IPS_40bit:
+        case TCR_IPS_40_BIT:
             output_size = 40;
             break;
-        case TCR_IPS_42bit:
+        case TCR_IPS_42_BIT:
             output_size = 42;
             break;
-        case TCR_IPS_44bit:
+        case TCR_IPS_44_BIT:
             output_size = 44;
             break;
-        case TCR_IPS_48bit:
+        case TCR_IPS_48_BIT:
         default:
             output_size = 48;
         }
@@ -1770,6 +1922,7 @@ static int64_t __p2m_walk_gpt_lpae(struct p2m_domain *p2m,
         return -EFAULT;
 
 /* TEST */
+#if 0
         printk("[ 2] __p2m_walk_gpt_lpae: \n"
                "                          tcr=0x%"PRIregister"\n"
                "                          t0sz=%d t1sz=%d\n"
@@ -1784,6 +1937,7 @@ static int64_t __p2m_walk_gpt_lpae(struct p2m_domain *p2m,
                level, gran, input_size,
                output_size,
                grainsizes[gran], strides[gran]);
+#endif
 /* TEST END */
 
     mfn = p2m_lookup(d, _gfn(paddr_to_pfn(ttbr & ((1ULL << output_size) - 1))), NULL);
@@ -1801,9 +1955,9 @@ static int64_t __p2m_walk_gpt_lpae(struct p2m_domain *p2m,
         if ( level == 3 || !pte.walk.valid || !pte.walk.table )
             break;
 
-        unmap_domain_page(table);
-
         mfn = p2m_lookup(d, _gfn(pte.walk.base), NULL);
+
+        unmap_domain_page(table);
 
         /* Check, whether the pte holds a valid address. */
         if ( mfn_eq(mfn, INVALID_MFN) )
@@ -1815,7 +1969,31 @@ static int64_t __p2m_walk_gpt_lpae(struct p2m_domain *p2m,
     unmap_domain_page(table);
 
     if ( !pte.walk.valid )
+/* TEST */
+    {
+//#if 0
+        printk("[ 2] __p2m_walk_gpt_lpae: \n"
+               "                          tcr=0x%"PRIregister"\n"
+               "                          t0sz=%d t1sz=%d\n"
+               "                          gva=0x%"PRIvaddr"\n"
+               "                          pte.walk.base=0x%"PRIpaddr"\n"
+               "                          gva-topbit=%d\n"
+               "                          level=%d gran=%d\n"
+               "                          input_size=%d\n"
+               "                          output_size=%d\n"
+               "                          grainsize=%d\n"
+               "                          stride=%d\n",
+               tcr, t0_sz, t1_sz, gva,
+               pfn_to_paddr(pte.walk.base),
+               topbit,
+               level, gran, input_size,
+               output_size,
+               grainsizes[gran], strides[gran]);
+//#endif
+
+/* TEST END */
         return -EFAULT;
+    }
 
     *ipa = pfn_to_paddr(pte.walk.base) | (gva & masks[level][gran]);
 
@@ -1844,15 +2022,11 @@ int64_t p2m_walk_gpt(struct p2m_domain *p2m, vaddr_t gva,
     if ( is_32bit_domain(d) )
 #endif
     {
-        /*
-         * XXX: We do not support 32-bit domain translation table walks for
-         * domains using the short-descriptor translation table format, yet.
-         */
         if ( !(tcr & TTBCR_EAE) )
-            return -EFAULT;
+            return __p2m_walk_gpt_sd(p2m, gva, ipa);
     }
 
-    return __p2m_walk_gpt_lpae(p2m, gva, ipa);
+    return __p2m_walk_gpt_ld(p2m, gva, ipa);
 }
 
 /*
