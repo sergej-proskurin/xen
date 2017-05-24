@@ -205,6 +205,20 @@ typedef union {
     lpae_walk_t walk;
 } lpae_t;
 
+#if 0
+typedef struct __packed {
+    unsigned int xn:1;          /* Execute Never */
+    unsigned int dt:1;          /* Small page: dt==1. Large page dt==0. */
+    unsigned int b:1;           /* */
+    unsigned int c:1;           /* */
+    unsigned int ap:2;          /* */
+    unsigned int tex:3;         /* */
+    unsigned int ap2:1;         /* */
+    unsigned int s:1;           /* */
+    unsigned int ng:1;          /* */
+    unsigned int base:20;       /* */
+} pte_pt_t;
+#endif
 typedef struct __packed {
     unsigned int dt:2;          /* Descriptor type */
     unsigned int pad1:8;
@@ -213,6 +227,7 @@ typedef struct __packed {
 
 typedef union {
     uint32_t bits;
+//    pte_pt_t pt;
     pte_walk_t walk;
 } pte_t;
 

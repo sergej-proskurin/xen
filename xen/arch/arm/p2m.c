@@ -1550,7 +1550,8 @@ void __init setup_virt_paging(void)
  * domain is running on the currently active VCPU.
  */
 static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
-                            vaddr_t gva, paddr_t *ipa)
+                             vaddr_t gva, paddr_t *ipa,
+                             unsigned int *perm_ro)
 {
     int disabled = 1;
     uint64_t mask;
@@ -1605,7 +1606,7 @@ static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
 
     /* Consider offset if n > 2. */
     if ( n > 2 )
-        table = (pte_t *)((uint32_t)table | (uint32_t)(ttbr & mask));
+        table = (pte_t *)((unsigned long)table | (unsigned long)(ttbr & mask));
 
     pte = table[offsets[level]];
 
@@ -1624,7 +1625,7 @@ static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
             return -EFAULT;
 
         table = map_domain_page(mfn);
-        table = (pte_t *)((uint32_t)table | ((pte.walk.base & 0x3) << 10));
+        table = (pte_t *)((unsigned long)table | ((pte.walk.base & 0x3) << 10));
 
         pte = table[offsets[level]];
 
@@ -1641,6 +1642,9 @@ static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
             mask = (1ULL << PAGE_SHIFT_64K) - 1;
             *ipa = (pte.bits & ~mask) | (gva & mask);
         }
+
+        /* Set access permissions[2:0]. */
+        *perm_ro = (pte.bits & 0x200) >> 9;
 
         break;
 
@@ -1662,6 +1666,9 @@ static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
             mask = ((1ULL << 9) - 1) & ~((1ULL << 5) - 1);
             *ipa |= (pte.bits & mask) << 36;
         }
+
+        /* Set access permission[2]. */
+        *perm_ro = (pte.bits & 0x8000) >> 15;
     }
 
     unmap_domain_page(table);
@@ -1679,11 +1686,12 @@ static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
 #endif
 /* TEST END */
 
-    return pte.bits;
+    return 0;
 }
 
-static int64_t __p2m_walk_gpt_ld(struct p2m_domain *p2m,
-                                 vaddr_t gva, paddr_t *ipa)
+static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
+                             vaddr_t gva, paddr_t *ipa,
+                             unsigned int *perm_ro)
 {
     int t0_sz, t1_sz, disabled = 1;
     unsigned int level;
@@ -1971,7 +1979,7 @@ static int64_t __p2m_walk_gpt_ld(struct p2m_domain *p2m,
     if ( !pte.walk.valid )
 /* TEST */
     {
-//#if 0
+#if 0
         printk("[ 2] __p2m_walk_gpt_lpae: \n"
                "                          tcr=0x%"PRIregister"\n"
                "                          t0sz=%d t1sz=%d\n"
@@ -1989,7 +1997,7 @@ static int64_t __p2m_walk_gpt_ld(struct p2m_domain *p2m,
                level, gran, input_size,
                output_size,
                grainsizes[gran], strides[gran]);
-//#endif
+#endif
 
 /* TEST END */
         return -EFAULT;
@@ -1997,12 +2005,14 @@ static int64_t __p2m_walk_gpt_ld(struct p2m_domain *p2m,
 
     *ipa = pfn_to_paddr(pte.walk.base) | (gva & masks[level][gran]);
 
+    *perm_ro = pte.pt.ro;
+
     /* Return the entire pte so that the caller can check flags by herself. */
-    return pte.bits;
+    return 0;
 }
 
-int64_t p2m_walk_gpt(struct p2m_domain *p2m, vaddr_t gva,
-                     paddr_t *ipa, unsigned int flags)
+int p2m_walk_gpt(struct p2m_domain *p2m, vaddr_t gva,
+                 paddr_t *ipa, unsigned int *perm_ro)
 {
     uint32_t sctlr = READ_SYSREG(SCTLR_EL1);
     register_t tcr = READ_SYSREG(TCR_EL1);
@@ -2023,10 +2033,10 @@ int64_t p2m_walk_gpt(struct p2m_domain *p2m, vaddr_t gva,
 #endif
     {
         if ( !(tcr & TTBCR_EAE) )
-            return __p2m_walk_gpt_sd(p2m, gva, ipa);
+            return __p2m_walk_gpt_sd(p2m, gva, ipa, perm_ro);
     }
 
-    return __p2m_walk_gpt_ld(p2m, gva, ipa);
+    return __p2m_walk_gpt_ld(p2m, gva, ipa, perm_ro);
 }
 
 /*

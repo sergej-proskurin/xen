@@ -101,6 +101,7 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag,
                                   const struct vcpu *v)
 {
     long rc;
+    unsigned int perm_ro;
     paddr_t ipa;
 /* TEST */
     paddr_t ipa2 = 0;
@@ -121,24 +122,29 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag,
      * ipa translation in software.
      */
     if ( rc < 0 )
-        if ( p2m_walk_gpt(p2m, gva, &ipa, flag) < 0 )
+    {
+        if ( p2m_walk_gpt(p2m, gva, &ipa, &perm_ro) < 0 )
             /*
              * The software gva to ipa translation can still fail, if the the
              * gva is not mapped or does not hold the requested access rights.
              */
             goto err;
 
+        if ( ((flag & GV2M_WRITE) == GV2M_WRITE) && perm_ro )
+            goto err;
+    }
+
 /* TEST */
-    rc = p2m_walk_gpt(p2m, gva, &ipa2, flag);
+    rc = p2m_walk_gpt(p2m, gva, &ipa2, &perm_ro);
     if ( rc < 0 || ipa != ipa2)
     {
-        printk("[ 1] dom[%d] - ERROR: rc=%ld - p2m_mem_access_check_and_get_page: ipa=0x%"PRIpaddr" vs. ipa2=0x%"PRIpaddr"\n",
-                p2m->domain->domain_id, rc, ipa, ipa2);
+        printk("[ 1] dom[%d] - ERROR: rc=%ld - p2m_mem_access_check_and_get_page: ipa=0x%"PRIpaddr" vs. ipa2=0x%"PRIpaddr" perm_ro=%d\n",
+                p2m->domain->domain_id, rc, ipa, ipa2, perm_ro);
     }
 
     if ( p2m->domain->domain_id > 0 )
-        printk("[ 1] dom[%d] p2m_mem_access_check_and_get_page: ipa=0x%"PRIpaddr" vs. ipa2=0x%"PRIpaddr"\n",
-                p2m->domain->domain_id, ipa, ipa2);
+        printk("[ 1] dom[%d] p2m_mem_access_check_and_get_page: ipa=0x%"PRIpaddr" vs. ipa2=0x%"PRIpaddr" perm_ro=%d\n",
+                p2m->domain->domain_id, ipa, ipa2, perm_ro);
 //    ASSERT(ipa == ipa2);
 /* TEST END */
 
