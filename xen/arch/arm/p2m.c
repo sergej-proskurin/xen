@@ -1552,8 +1552,140 @@ static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
                              vaddr_t gva, paddr_t *ipa,
                              unsigned int *perm_ro)
 {
-    /* Not implemented yet. */
-    return -EFAULT;
+    int disabled = 1;
+    uint64_t mask;
+    pte_t pte, *table;
+    mfn_t mfn;
+    int32_t ttbr;
+    register_t ttbcr = READ_SYSREG(TCR_EL1);
+    unsigned int level = 0, n = ttbcr & TTBCR_N_MASK;
+    struct domain *d = p2m->domain;
+
+    const paddr_t offsets[2] = {
+        ((paddr_t)(gva >> 20) & ((1ULL << (12 - n)) - 1)),
+        ((paddr_t)(gva >> 12) & ((1ULL << 8) - 1))
+    };
+
+    /* TODO: Do the same (31 bit) with LPAE code!! */
+    mask = ((1ULL << REGISTER_WIDTH_32_BIT) - 1) &
+           ~((1ULL << (REGISTER_WIDTH_32_BIT - n)) - 1);
+
+    if ( n == 0 || !(gva & mask) )
+    {
+        /* Use TTBR0 for GVA to IPA translation. */
+        ttbr = READ_SYSREG64(TTBR0_EL1);
+
+        /* If TTBCR.PD0 is set, translations using TTBR0 are disabled. */
+        disabled = ( ttbcr & TTBCR_PD0 ) ? 1 : 0;
+    }
+    else
+    {
+        /* Use TTBR1 for GVA to IPA translation. */
+        ttbr = READ_SYSREG64(TTBR1_EL1);
+
+        /* If TTBCR.PD1 is set, translations using TTBR1 are disabled. */
+        disabled = ( ttbcr & TTBCR_PD1 ) ? 1 : 0;
+    }
+
+    if ( disabled )
+        return -EFAULT;
+
+    mask = (1ULL << (14 - n)) - 1;
+    mfn = p2m_lookup(d, _gfn(paddr_to_pfn(ttbr & ~mask)), NULL);
+
+    /* Check, whether TTBR holds a valid address. */
+    if ( mfn_eq(mfn, INVALID_MFN) )
+        return -EFAULT;
+
+    /*
+     * XXX: The 2nd level lookup table might comprise 4 concatenated 4K
+     * pages.  Check how to map concatenated tables at once.
+     */
+    table = map_domain_page(mfn);
+
+    /* Consider offset if n > 2. */
+    if ( n > 2 )
+        table = (pte_t *)((unsigned long)table | (unsigned long)(ttbr & mask));
+
+    pte = table[offsets[level]];
+
+    switch ( pte.walk.dt ) {
+    case 0: /* Invalid mapping. */
+        return -EFAULT;
+
+    case 1: /* Large or small page. */
+        level++;
+        mfn = p2m_lookup(d, _gfn(pte.walk.base >> 2), NULL);
+
+        unmap_domain_page(table);
+
+        /* Check, whether the pte holds a valid address. */
+        if ( mfn_eq(mfn, INVALID_MFN) )
+            return -EFAULT;
+
+        table = map_domain_page(mfn);
+        table = (pte_t *)((unsigned long)table | ((pte.walk.base & 0x3) << 10));
+
+        pte = table[offsets[level]];
+
+        if ( pte.walk.dt == 0 )
+            break;
+
+        if ( pte.walk.dt & 0x2 ) /* Small page. */
+        {
+            mask = (1ULL << PAGE_SHIFT_4K) - 1;
+            *ipa = (pte.bits & ~mask) | (gva & mask);
+        }
+        else /* Large page. */
+        {
+            mask = (1ULL << PAGE_SHIFT_64K) - 1;
+            *ipa = (pte.bits & ~mask) | (gva & mask);
+        }
+
+        /* Set access permissions[2:0]. */
+        *perm_ro = (pte.bits & 0x200) >> 9;
+
+        break;
+
+    case 2: /* Section. */
+    case 3: /* Section or Supersection. */
+        if ( !(pte.bits & (1ULL << 18)) ) /* Section */
+        {
+            mask = (1ULL << 20) - 1;
+            *ipa = (pte.bits & ~mask) | (gva & mask);
+        }
+        else /* Supersection */
+        {
+            mask = (1ULL << 24) - 1;
+            *ipa = (pte.bits & ~mask) | (gva & mask);
+
+            mask = ((1ULL << 24) - 1) & ~((1ULL << 20) - 1);
+            *ipa |= (pte.bits & mask) << 32;
+
+            mask = ((1ULL << 9) - 1) & ~((1ULL << 5) - 1);
+            *ipa |= (pte.bits & mask) << 36;
+        }
+
+        /* Set access permission[2]. */
+        *perm_ro = (pte.bits & 0x8000) >> 15;
+    }
+
+    unmap_domain_page(table);
+
+    if ( pte.walk.dt == 0 )
+        return -EFAULT;
+
+/* TEST */
+#if 0
+        printk("[ 2] __p2m_walk_gpt_sd: \n"
+               "                          ttbcr=0x%"PRIregister"\n"
+               "                          n=%d\n"
+               "                          gva=0x%"PRIvaddr"\n",
+               ttbcr, n, gva);
+#endif
+/* TEST END */
+
+    return 0;
 }
 
 /*
