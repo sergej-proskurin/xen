@@ -500,6 +500,51 @@ static inline int gva_to_ipa(vaddr_t va, paddr_t *paddr, unsigned int flags)
 
 #define PAGE_ALIGN(x) (((x) + PAGE_SIZE - 1) & PAGE_MASK)
 
+#define LPAE_SHIFT_4K           (9)
+#define LPAE_SHIFT_16K          (11)
+#define LPAE_SHIFT_64K          (13)
+
+#define lpae_entries(gran)      (_AC(1,U) << LPAE_SHIFT_##gran)
+#define lpae_entry_mask(gran)   (lpae_entries(gran) - 1)
+
+#define PAGE_SHIFT_4K           (12)
+#define PAGE_SHIFT_16K          (14)
+#define PAGE_SHIFT_64K          (16)
+
+#define third_shift(gran)       (PAGE_SHIFT_##gran)
+#define third_size(gran)        ((paddr_t)1 << third_shift(gran))
+
+#define second_shift(gran)      (third_shift(gran) + LPAE_SHIFT_##gran)
+#define second_size(gran)       ((paddr_t)1 << second_shift(gran))
+
+#define first_shift(gran)       (second_shift(gran) + LPAE_SHIFT_##gran)
+#define first_size(gran)        ((paddr_t)1 << first_shift(gran))
+
+/* Note that there is no zeroeth lookup level with a 64K granule size. */
+#define zeroeth_shift(gran)     (first_shift(gran) + LPAE_SHIFT_##gran)
+#define zeroeth_size(gran)      ((paddr_t)1 << zeroeth_shift(gran))
+
+#define GUEST_TABLE_OFFSET(offs, gran)          ((paddr_t)(offs) & lpae_entry_mask(gran))
+#define third_guest_table_offset(va, gran)      GUEST_TABLE_OFFSET((va >> third_shift(gran)), gran)
+#define second_guest_table_offset(va, gran)     GUEST_TABLE_OFFSET((va >> second_shift(gran)), gran)
+#define first_guest_table_offset(va, gran)      GUEST_TABLE_OFFSET((va >> first_shift(gran)), gran)
+#define zeroeth_guest_table_offset(va, gran)    GUEST_TABLE_OFFSET((va >> zeroeth_shift(gran)), gran)
+
+#define third_guest_table_offset_4k(va)         third_guest_table_offset(va, 4K)
+#define third_guest_table_offset_16k(va)        third_guest_table_offset(va, 16K)
+#define third_guest_table_offset_64k(va)        third_guest_table_offset(va, 64K)
+
+#define second_guest_table_offset_4k(va)        second_guest_table_offset(va, 4K)
+#define second_guest_table_offset_16k(va)       second_guest_table_offset(va, 16K)
+#define second_guest_table_offset_64k(va)       second_guest_table_offset(va, 64K)
+
+#define first_guest_table_offset_4k(va)         first_guest_table_offset(va, 4K)
+#define first_guest_table_offset_16k(va)        first_guest_table_offset(va, 16K)
+#define first_guest_table_offset_64k(va)        first_guest_table_offset(va, 64K)
+
+#define zeroeth_guest_table_offset_4k(va)       zeroeth_guest_table_offset(va, 4K)
+#define zeroeth_guest_table_offset_16k(va)      zeroeth_guest_table_offset(va, 16K)
+
 #endif /* __ARM_PAGE_H__ */
 
 /*
