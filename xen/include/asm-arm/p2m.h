@@ -264,6 +264,12 @@ void guest_physmap_remove_page(struct domain *d,
 
 mfn_t gfn_to_mfn(struct domain *d, gfn_t gfn);
 
+/* Walk the guest's page tables in software. */
+int p2m_walk_gpt(struct p2m_domain *p2m,
+                 vaddr_t gva,
+                 paddr_t *ipa,
+                 unsigned int *perm_ro);
+
 /*
  * Populate-on-demand
  */
