@@ -18,6 +18,7 @@
 #include <xen/sched.h>
 #include <xen/domain_page.h>
 #include <asm/guest_walk.h>
+#include <asm/short-desc.h>
 
 /*
  * The function guest_walk_sd translates a given GVA into an IPA using the
@@ -30,8 +31,170 @@ static int guest_walk_sd(const struct vcpu *v,
                          vaddr_t gva, paddr_t *ipa,
                          unsigned int *perms)
 {
-    /* Not implemented yet. */
-    return -EFAULT;
+    bool disabled = true;
+    int64_t ttbr;
+    paddr_t mask, paddr;
+    short_desc_t pte, *table;
+    struct page_info *page;
+    register_t ttbcr = READ_SYSREG(TCR_EL1);
+    unsigned int level = 0, n = ttbcr & TTBCR_N_MASK;
+    struct domain *d = v->domain;
+
+    const paddr_t offsets[2] = {
+        ((paddr_t)(gva >> 20) & ((1ULL << (12 - n)) - 1)),
+        ((paddr_t)(gva >> 12) & ((1ULL << 8) - 1))
+    };
+
+    mask = ((1ULL << BITS_PER_WORD) - 1) &
+           ~((1ULL << (BITS_PER_WORD - n)) - 1);
+
+    if ( n == 0 || !(gva & mask) )
+    {
+        /* Use TTBR0 for GVA to IPA translation. */
+        ttbr = READ_SYSREG64(TTBR0_EL1);
+
+        /* If TTBCR.PD0 is set, translations using TTBR0 are disabled. */
+        disabled = ttbcr & TTBCR_PD0;
+    }
+    else
+    {
+        /* Use TTBR1 for GVA to IPA translation. */
+        ttbr = READ_SYSREG64(TTBR1_EL1);
+
+        /* If TTBCR.PD1 is set, translations using TTBR1 are disabled. */
+        disabled = ttbcr & TTBCR_PD1;
+
+        /*
+         * TTBR1 translation always works like n==0 TTBR0 translation (ARM DDI
+         * 0487B.a J1-6003).
+         */
+        n = 0;
+    }
+
+    if ( disabled )
+        return -EFAULT;
+
+    /*
+     * The address of the descriptor for the initial lookup has the following
+     * format: [ttbr<31:14-n>:gva<31-n:20>:00] (ARM DDI 0487B.a J1-6003). In
+     * this way, the first lookup level might comprise up to four consecutive
+     * pages. To avoid mapping all of the pages, we simply map the page that is
+     * needed by the first level translation by incorporating up to 2 MSBs of
+     * the GVA.
+     */
+    mask = (1ULL << (14 - n)) - 1;
+    paddr = (ttbr & ~mask) | (offsets[level] << 2);
+
+    page = get_page_from_gfn(d, paddr_to_pfn(paddr), NULL, P2M_ALLOC);
+    if ( !page )
+        return -EFAULT;
+
+    table = __map_domain_page(page);
+
+    /*
+     * Consider that the first level address translation does not need to be
+     * page-aligned if n > 2.
+     */
+    if ( n > 2 )
+    {
+        /* Make sure that we consider the bits ttbr<12:14-n> if n > 2. */
+        mask = ((1ULL << 12) - 1) & ~((1ULL << (14 - n)) - 1);
+        table = (short_desc_t *)((unsigned long)table | (unsigned long)(ttbr & mask));
+    }
+
+    /*
+     * As we have considered up to 2 MSBs of the GVA for mapping the first
+     * level translation table, we need to make sure that we limit the table
+     * offset that is is indexed by GVA<31-n:20> to max 10 bits to avoid
+     * exceeding the page size limit.
+     */
+    mask = ((1ULL << 10) - 1);
+    pte = table[offsets[level] & mask];
+
+    unmap_domain_page(table);
+    put_page(page);
+
+    switch ( pte.walk.dt )
+    {
+    case L1DESC_INVALID:
+        return -EFAULT;
+
+    case L1DESC_PAGE_TABLE:
+        level++;
+
+        page = get_page_from_gfn(d, (pte.walk.base >> 2), NULL, P2M_ALLOC);
+        if ( !page )
+            return -EFAULT;
+
+        table = __map_domain_page(page);
+        /*
+         * The second level translation table is addressed by PTE<31:10>. Hence
+         * it does not need to be page aligned. Make sure that we also consider
+         * the bits PTE<11:10>.
+         */
+        table = (short_desc_t *)((unsigned long)table | ((pte.walk.base & 0x3) << 10));
+
+        pte = table[offsets[level]];
+
+        unmap_domain_page(table);
+        put_page(page);
+
+        if ( pte.walk.dt == L2DESC_INVALID )
+            return -EFAULT;
+
+        if ( pte.pg.page ) /* Small page. */
+        {
+            mask = (1ULL << PAGE_SHIFT_4K) - 1;
+
+            *ipa = (pte.pg.base << PAGE_SHIFT_4K) | (gva & mask);
+
+            /* Set execute permissions associated with the small page. */
+            if ( !pte.pg.xn )
+                *perms = GV2M_EXEC;
+        }
+        else /* Large page. */
+        {
+            mask = (1ULL << PAGE_SHIFT_64K) - 1;
+
+            *ipa = (pte.lpg.base << PAGE_SHIFT_64K) | (gva & mask);
+
+            /* Set execute permissions associated with the large page. */
+            if ( !pte.lpg.xn )
+                *perms = GV2M_EXEC;
+        }
+
+        /* Set permissions so that the caller can check the flags by herself. */
+        if ( !pte.pg.ro )
+            *perms |= GV2M_WRITE;
+
+        break;
+
+    case L1DESC_SECTION:
+    case L1DESC_SECTION_PXN:
+        if ( !pte.sec.supersec ) /* Section */
+        {
+            mask = (1ULL << L1DESC_SECTION_SHIFT) - 1;
+
+            *ipa = (pte.sec.base << L1DESC_SECTION_SHIFT) | (gva & mask);
+        }
+        else /* Supersection */
+        {
+            mask = (1ULL << L1DESC_SUPERSECTION_SHIFT) - 1;
+
+            *ipa = gva & mask;
+            *ipa |= (paddr_t)(pte.supersec.base) << L1DESC_SUPERSECTION_SHIFT;
+            *ipa |= (paddr_t)(pte.supersec.extbase1) << L1DESC_SUPERSECTION_EXT_BASE1_SHIFT;
+            *ipa |= (paddr_t)(pte.supersec.extbase2) << L1DESC_SUPERSECTION_EXT_BASE2_SHIFT;
+        }
+
+        /* Set permissions so that the caller can check the flags by herself. */
+        if ( !pte.sec.ro )
+            *perms = GV2M_WRITE;
+        if ( !pte.sec.xn )
+            *perms |= GV2M_EXEC;
+    }
+
+    return 0;
 }
 
 /*
