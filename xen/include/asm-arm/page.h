@@ -500,6 +500,73 @@ static inline int gva_to_ipa(vaddr_t va, paddr_t *paddr, unsigned int flags)
 
 #define PAGE_ALIGN(x) (((x) + PAGE_SIZE - 1) & PAGE_MASK)
 
+#define LPAE_SHIFT_4K           (9)
+#define LPAE_SHIFT_16K          (11)
+#define LPAE_SHIFT_64K          (13)
+
+#define LPAE_ENTRIES_4K         (_AC(1,U) << LPAE_SHIFT_4K)
+#define LPAE_ENTRIES_16K        (_AC(1,U) << LPAE_SHIFT_16K)
+#define LPAE_ENTRIES_64K        (_AC(1,U) << LPAE_SHIFT_64K)
+
+#define LPAE_ENTRY_MASK_4K      (LPAE_ENTRIES_4K - 1)
+#define LPAE_ENTRY_MASK_16K     (LPAE_ENTRIES_16K - 1)
+#define LPAE_ENTRY_MASK_64K     (LPAE_ENTRIES_64K - 1)
+
+#define PAGE_SHIFT_4K           (12)
+#define PAGE_SHIFT_16K          (14)
+#define PAGE_SHIFT_64K          (16)
+
+#define THIRD_SHIFT_4K          (PAGE_SHIFT_4K)
+#define THIRD_SHIFT_16K         (PAGE_SHIFT_16K)
+#define THIRD_SHIFT_64K         (PAGE_SHIFT_64K)
+
+#define THIRD_SIZE_4K           ((paddr_t)1 << THIRD_SHIFT_4K)
+#define THIRD_SIZE_16K          ((paddr_t)1 << THIRD_SHIFT_16K)
+#define THIRD_SIZE_64K          ((paddr_t)1 << THIRD_SHIFT_64K)
+
+#define SECOND_SHIFT_4K         (THIRD_SHIFT_4K + LPAE_SHIFT_4K)
+#define SECOND_SHIFT_16K        (THIRD_SHIFT_16K + LPAE_SHIFT_16K)
+#define SECOND_SHIFT_64K        (THIRD_SHIFT_64K + LPAE_SHIFT_64K)
+
+#define SECOND_SIZE_4K          ((paddr_t)1 << SECOND_SHIFT_4K)
+#define SECOND_SIZE_16K         ((paddr_t)1 << SECOND_SHIFT_16K)
+#define SECOND_SIZE_64K         ((paddr_t)1 << SECOND_SHIFT_64K)
+
+#define FIRST_SHIFT_4K          (SECOND_SHIFT_4K + LPAE_SHIFT_4K)
+#define FIRST_SHIFT_16K         (SECOND_SHIFT_16K + LPAE_SHIFT_16K)
+#define FIRST_SHIFT_64K         (SECOND_SHIFT_64K + LPAE_SHIFT_64K)
+
+#define FIRST_SIZE_4K           ((paddr_t)1 << FIRST_SHIFT_4K)
+#define FIRST_SIZE_16K          ((paddr_t)1 << FIRST_SHIFT_16K)
+#define FIRST_SIZE_64K          ((paddr_t)1 << FIRST_SHIFT_64K)
+
+#define ZEROETH_SHIFT_4K        (FIRST_SHIFT_4K + LPAE_SHIFT_4K)
+#define ZEROETH_SHIFT_16K       (FIRST_SHIFT_16K + LPAE_SHIFT_16K)
+
+#define ZEROETH_SIZE_4K         ((paddr_t)1 << ZEROETH_SHIFT_4K)
+#define ZEROETH_SIZE_16K        ((paddr_t)1 << ZEROETH_SHIFT_16K)
+
+#define GUEST_TABLE_OFFSET(offs, gran)          ((paddr_t)(offs) & LPAE_ENTRY_MASK_##gran)
+#define third_guest_table_offset(va, gran)      GUEST_TABLE_OFFSET((va >> THIRD_SHIFT_##gran), gran)
+#define second_guest_table_offset(va, gran)     GUEST_TABLE_OFFSET((va >> SECOND_SHIFT_##gran), gran)
+#define first_guest_table_offset(va, gran)      GUEST_TABLE_OFFSET((va >> FIRST_SHIFT_##gran), gran)
+#define zeroeth_guest_table_offset(va, gran)    GUEST_TABLE_OFFSET((va >> ZEROETH_SHIFT_##gran), gran)
+
+#define third_guest_table_offset_4k(va)         third_guest_table_offset(va, 4K)
+#define third_guest_table_offset_16k(va)        third_guest_table_offset(va, 16K)
+#define third_guest_table_offset_64k(va)        third_guest_table_offset(va, 64K)
+
+#define second_guest_table_offset_4k(va)        second_guest_table_offset(va, 4K)
+#define second_guest_table_offset_16k(va)       second_guest_table_offset(va, 16K)
+#define second_guest_table_offset_64k(va)       second_guest_table_offset(va, 64K)
+
+#define first_guest_table_offset_4k(va)         first_guest_table_offset(va, 4K)
+#define first_guest_table_offset_16k(va)        first_guest_table_offset(va, 16K)
+#define first_guest_table_offset_64k(va)        first_guest_table_offset(va, 64K)
+
+#define zeroeth_guest_table_offset_4k(va)       zeroeth_guest_table_offset(va, 4K)
+#define zeroeth_guest_table_offset_16k(va)      zeroeth_guest_table_offset(va, 16K)
+
 #endif /* __ARM_PAGE_H__ */
 
 /*
