@@ -338,6 +338,10 @@
 #define MM64_VMID_16_BITS_SUPPORT   0x2
 #endif
 
+/* Register width */
+#define REGISTER_WIDTH_64_BIT       (64)
+#define REGISTER_WIDTH_32_BIT       (32)
+
 #ifndef __ASSEMBLY__
 
 struct cpuinfo_arm {
