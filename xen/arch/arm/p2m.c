@@ -1569,7 +1569,7 @@ static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
 
     /* TODO: Do the same (31 bit) with LPAE code!! */
     mask = ((1ULL << REGISTER_WIDTH_32_BIT) - 1) &
-           ~((1ULL << ((REGISTER_WIDTH_32_BIT - 1) - n)) - 1);
+           ~((1ULL << (REGISTER_WIDTH_32_BIT - n)) - 1);
 
     if ( n == 0 || !(gva & mask) )
     {
@@ -1658,8 +1658,8 @@ static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
         else /* Supersection */
         {
             mask = (1ULL << 24) - 1;
-            *ipa = (pte.bits & ~mask) | (gva & mask); 
-            
+            *ipa = (pte.bits & ~mask) | (gva & mask);
+
             mask = ((1ULL << 24) - 1) & ~((1ULL << 20) - 1);
             *ipa |= (pte.bits & mask) << 32;
 
@@ -1861,7 +1861,7 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
         gran = 0;
 
         mask = ((1ULL << REGISTER_WIDTH_32_BIT) - 1) &
-               ~((1ULL << ((REGISTER_WIDTH_32_BIT - 1) - t0_sz)) - 1);
+               ~((1ULL << (REGISTER_WIDTH_32_BIT - t0_sz)) - 1);
 
         if ( t0_sz == 0 || !(gva & mask) )
         {
@@ -1875,9 +1875,9 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
         }
 
         mask = ((1ULL << REGISTER_WIDTH_32_BIT) - 1) &
-               ~((1ULL << ((REGISTER_WIDTH_32_BIT - 1) - t1_sz)) - 1);
+               ~((1ULL << (REGISTER_WIDTH_32_BIT - t1_sz)) - 1);
 
-        if ( ((t1_sz == 0) && !ttbr) || (/*t1_sz &&*/ (gva & mask) == mask) )
+        if ( ((t1_sz == 0) && !ttbr) || (t1_sz && (gva & mask) == mask) )
         {
             input_size = REGISTER_WIDTH_32_BIT - t1_sz;
 
@@ -1929,9 +1929,14 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
     if ( output_size != 48 && (ttbr & mask) )
         return -EFAULT;
 
+    mfn = p2m_lookup(d, _gfn(paddr_to_pfn(ttbr & ((1ULL << output_size) - 1))), NULL);
+
+    /* Check, whether TTBR holds a valid address. */
+    if ( mfn_eq(mfn, INVALID_MFN) )
 /* TEST */
+    {
 #if 0
-        printk("[ 2] __p2m_walk_gpt_lpae: \n"
+        printk("[ 1] __p2m_walk_gpt_lpae: \n"
                "                          tcr=0x%"PRIregister"\n"
                "                          t0sz=%d t1sz=%d\n"
                "                          gva=0x%"PRIvaddr"\n"
@@ -1948,11 +1953,8 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
 #endif
 /* TEST END */
 
-    mfn = p2m_lookup(d, _gfn(paddr_to_pfn(ttbr & ((1ULL << output_size) - 1))), NULL);
-
-    /* Check, whether TTBR holds a valid address. */
-    if ( mfn_eq(mfn, INVALID_MFN) )
         return -EFAULT;
+    }
 
     table = map_domain_page(mfn);
 
@@ -1976,15 +1978,16 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
 
     unmap_domain_page(table);
 
-    if ( !pte.walk.valid )
+    if ( !pte.walk.valid || ((level == 3) & !pte.walk.table) )
 /* TEST */
     {
-#if 0
+//#if 0
         printk("[ 2] __p2m_walk_gpt_lpae: \n"
                "                          tcr=0x%"PRIregister"\n"
                "                          t0sz=%d t1sz=%d\n"
                "                          gva=0x%"PRIvaddr"\n"
-               "                          pte.walk.base=0x%"PRIpaddr"\n"
+               "                          ipa=0x%"PRIpaddr"\n"
+               "                          pte=0x%"PRIpaddr"\n"
                "                          gva-topbit=%d\n"
                "                          level=%d gran=%d\n"
                "                          input_size=%d\n"
@@ -1993,13 +1996,14 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
                "                          stride=%d\n",
                tcr, t0_sz, t1_sz, gva,
                pfn_to_paddr(pte.walk.base),
+               pte.bits,
                topbit,
                level, gran, input_size,
                output_size,
                grainsizes[gran], strides[gran]);
-#endif
-
+//#endif
 /* TEST END */
+
         return -EFAULT;
     }
 

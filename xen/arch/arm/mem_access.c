@@ -145,7 +145,6 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag,
     if ( p2m->domain->domain_id > 0 )
         printk("[ 1] dom[%d] p2m_mem_access_check_and_get_page: ipa=0x%"PRIpaddr" vs. ipa2=0x%"PRIpaddr" perm_ro=%d\n",
                 p2m->domain->domain_id, ipa, ipa2, perm_ro);
-//    ASSERT(ipa == ipa2);
 /* TEST END */
 
 
