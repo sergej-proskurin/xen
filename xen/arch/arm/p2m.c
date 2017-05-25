@@ -1548,6 +1548,64 @@ void __init setup_virt_paging(void)
 }
 
 /*
+ * The function __p2m_walk_gpt_sd translates a given GVA into an IPA using the
+ * short-descriptor translation table format in software. This function assumes
+ * that the domain is running on the currently active vCPU. To walk the guest's
+ * page table on a different vCPU, the following registers would need to be
+ * loaded: TCR_EL1, TTBR0_EL1, TTBR1_EL1, and SCTLR_EL1.
+ */
+static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
+                             vaddr_t gva, paddr_t *ipa,
+                             unsigned int *perm_ro)
+{
+    /* Not implemented yet. */
+    return -EFAULT;
+}
+
+/*
+ * The function __p2m_walk_gpt_ld translates a given GVA into an IPA using the
+ * long-descriptor translation table format in software. This function assumes
+ * that the domain is running on the currently active vCPU. To walk the guest's
+ * page table on a different vCPU, the following registers would need to be
+ * loaded: TCR_EL1, TTBR0_EL1, TTBR1_EL1, and SCTLR_EL1.
+ */
+static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
+                             vaddr_t gva, paddr_t *ipa,
+                             unsigned int *perm_ro)
+{
+    /* Not implemented yet. */
+    return -EFAULT;
+}
+
+int p2m_walk_gpt(struct p2m_domain *p2m, vaddr_t gva,
+                 paddr_t *ipa, unsigned int *perm_ro)
+{
+    uint32_t sctlr = READ_SYSREG(SCTLR_EL1);
+    register_t tcr = READ_SYSREG(TCR_EL1);
+#ifdef CONFIG_ARM_64
+    struct domain *d = p2m->domain;
+#endif
+
+    /* If the MMU is disabled, there is no need to translate the gva. */
+    if ( !(sctlr & SCTLR_M) )
+    {
+        *ipa = gva;
+
+        return 0;
+    }
+
+#ifdef CONFIG_ARM_64
+    if ( is_32bit_domain(d) )
+#endif
+    {
+        if ( !(tcr & TTBCR_EAE) )
+            return __p2m_walk_gpt_sd(p2m, gva, ipa, perm_ro);
+    }
+
+    return __p2m_walk_gpt_ld(p2m, gva, ipa, perm_ro);
+}
+
+/*
  * Local variables:
  * mode: C
  * c-file-style: "BSD"
