@@ -94,6 +94,9 @@
 #define TTBCR_N_2KB  _AC(0x03,U)
 #define TTBCR_N_1KB  _AC(0x04,U)
 
+#define TTBCR_PD0       (_AC(1,U)<<4)
+#define TTBCR_PD1       (_AC(1,U)<<5)
+
 /* SCTLR System Control Register. */
 /* HSCTLR is a subset of this. */
 #define SCTLR_TE        (_AC(1,U)<<30)
@@ -155,6 +158,19 @@
 /* TCR: Stage 1 Translation Control */
 
 #define TCR_T0SZ(x)     ((x)<<0)
+#define TCR_T0SZ_SHIFT  (0)
+#define TCR_T1SZ_SHIFT  (16)
+
+/*
+ * According to ARM DDI 0487A.g, TCR_EL1.{T0SZ,T1SZ} (Aarch64, Section D7-2021)
+ * comprises 6 bits and TTBCR.{T0SZ,T1SZ} (Aarch32, Section G6-4624) comprises
+ * 3 bits following another 3 bits for RES0. Thus, the mask for both registers
+ * should be 0x3f.
+ */
+#define TCR_SZ_MASK     (_AC(0x3f,UL)<<0)
+
+#define TCR_EPD0        (_AC(0x1,UL)<<7)
+#define TCR_EPD1        (_AC(0x1,UL)<<23)
 
 #define TCR_IRGN0_NC    (_AC(0x0,UL)<<8)
 #define TCR_IRGN0_WBWA  (_AC(0x1,UL)<<8)
@@ -173,11 +189,35 @@
 #define TCR_TG0_4K      (_AC(0x0,UL)<<14)
 #define TCR_TG0_64K     (_AC(0x1,UL)<<14)
 #define TCR_TG0_16K     (_AC(0x2,UL)<<14)
+#define TCR_TG0_MASK    (_AC(0x3,UL)<<14)
+#define TCR_TG0_SHIFT   (14)
+
+#define TCR_TG1_16K     (_AC(0x1,UL)<<30)
+#define TCR_TG1_4K      (_AC(0x2,UL)<<30)
+#define TCR_TG1_64K     (_AC(0x3,UL)<<30)
+#define TCR_TG1_MASK    (_AC(0x3,UL)<<30)
+#define TCR_TG1_SHIFT   (30)
+
+#define TCR_IPS_32_BIT  (_AC(0x0,ULL)<<32)
+#define TCR_IPS_36_BIT  (_AC(0x1,ULL)<<32)
+#define TCR_IPS_40_BIT  (_AC(0x2,ULL)<<32)
+#define TCR_IPS_42_BIT  (_AC(0x3,ULL)<<32)
+#define TCR_IPS_44_BIT  (_AC(0x4,ULL)<<32)
+#define TCR_IPS_48_BIT  (_AC(0x5,ULL)<<32)
+#define TCR_IPS_MASK    (_AC(0x7,ULL)<<32)
+#define TCR_IPS_SHIFT   (32)
+
+#define TCR_TB_31       (31)
 
 #ifdef CONFIG_ARM_64
 
 #define TCR_PS(x)       ((x)<<16)
 #define TCR_TBI         (_AC(0x1,UL)<<20)
+#define TCR_TBI0        (_AC(0x1,UL)<<37)
+#define TCR_TBI1        (_AC(0x1,UL)<<38)
+
+#define TCR_TB_63       (63)
+#define TCR_TB_55       (55)
 
 #define TCR_RES1        (_AC(1,UL)<<31|_AC(1,UL)<<23)
 
@@ -186,6 +226,15 @@
 #define TCR_RES1        (_AC(1,UL)<<31)
 
 #endif
+
+#define IPS_MIN         (25)
+#define IPS_MAX         (48)
+#define IPS_32_BIT      (32)
+#define IPS_36_BIT      (36)
+#define IPS_40_BIT      (40)
+#define IPS_42_BIT      (42)
+#define IPS_44_BIT      (44)
+#define IPS_48_BIT      (48)
 
 /* VTCR: Stage 2 Translation Control */
 
