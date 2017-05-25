@@ -101,6 +101,7 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag,
                                   const struct vcpu *v)
 {
     long rc;
+    unsigned int perm_ro;
     paddr_t ipa;
     gfn_t gfn;
     mfn_t mfn;
@@ -110,8 +111,25 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag,
     struct p2m_domain *p2m = &v->domain->arch.p2m;
 
     rc = gva_to_ipa(gva, &ipa, flag);
+
+    /*
+     * In case mem_access is active, hardware-based gva_to_ipa translation
+     * might fail. Since gva_to_ipa uses the guest's translation tables, access
+     * to which might be restricted by the active VTTBR, we perform a gva to
+     * ipa translation in software.
+     */
     if ( rc < 0 )
-        goto err;
+    {
+        if ( p2m_walk_gpt(p2m, gva, &ipa, &perm_ro) < 0 )
+            /*
+             * The software gva to ipa translation can still fail, if the the
+             * gva is not mapped or does not hold the requested access rights.
+             */
+            goto err;
+
+        if ( ((flag & GV2M_WRITE) == GV2M_WRITE) && perm_ro )
+            goto err;
+    }
 
     gfn = _gfn(paddr_to_pfn(ipa));
 
