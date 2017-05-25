@@ -205,6 +205,110 @@ typedef union {
     lpae_walk_t walk;
 } lpae_t;
 
+/*
+ *  Comprises bits of the level 1 short-descriptor format representing
+ *  a section.
+ */
+typedef struct __packed {
+    unsigned int pxn:1;         /* Privileged Execute Never */
+    unsigned int sec:1;         /* == 1 if section or supersection */
+    unsigned int b:1;           /* Bufferable */
+    unsigned int c:1;           /* Cacheable */
+    unsigned int xn:1;          /* Execute Never */
+    unsigned int dom:4;         /* Domain field */
+    unsigned int impl:1;        /* Implementation defined */
+    unsigned int ap:2;          /* AP[1:0] */
+    unsigned int tex:3;         /* TEX[2:0] */
+    unsigned int ro:1;          /* AP[2] */
+    unsigned int s:1;           /* Shareable */
+    unsigned int ng:1;          /* Non-global */
+    unsigned int supersec:1;    /* Must be 0 for sections */
+    unsigned int ns:1;          /* Non-secure */
+    unsigned int base:12;       /* Section base address */
+} pte_sd_l1desc_sec_t;
+
+/*
+ *  Comprises bits of the level 1 short-descriptor format representing
+ *  a supersection.
+ */
+typedef struct __packed {
+    unsigned int pxn:1;         /* Privileged Execute Never */
+    unsigned int sec:1;         /* == 1 if section or supersection */
+    unsigned int b:1;           /* Bufferable */
+    unsigned int c:1;           /* Cacheable */
+    unsigned int xn:1;          /* Execute Never */
+    unsigned int extbase2:4;    /* Extended base address, PA[39:36] */
+    unsigned int impl:1;        /* Implementation defined */
+    unsigned int ap:2;          /* AP[1:0] */
+    unsigned int tex:3;         /* TEX[2:0] */
+    unsigned int ro:1;          /* AP[2] */
+    unsigned int s:1;           /* Shareable */
+    unsigned int ng:1;          /* Non-global */
+    unsigned int supersec:1;    /* Must be 0 for sections */
+    unsigned int ns:1;          /* Non-secure */
+    unsigned int extbase1:4;    /* Extended base address, PA[35:32] */
+    unsigned int base:8;        /* Supersection base address */
+} pte_sd_l1desc_supersec_t;
+
+/*
+ *  Comprises bits of the level 2 short-descriptor format representing
+ *  a small page.
+ */
+typedef struct __packed {
+    unsigned int xn:1;          /* Execute Never */
+    unsigned int page:1;        /* ==1 if small page */
+    unsigned int b:1;           /* Bufferable */
+    unsigned int c:1;           /* Cacheable */
+    unsigned int ap:2;          /* AP[1:0] */
+    unsigned int tex:3;         /* TEX[2:0] */
+    unsigned int ro:1;          /* AP[2] */
+    unsigned int s:1;           /* Shareable */
+    unsigned int ng:1;          /* Non-global */
+    unsigned int base:20;       /* Small page base address */
+} pte_sd_l2desc_page_t;
+
+/*
+ *  Comprises bits of the level 2 short-descriptor format representing
+ *  a large page.
+ */
+typedef struct __packed {
+    unsigned int lpage:1;       /* ==1 if large page */
+    unsigned int page:1;        /* ==0 if large page */
+    unsigned int b:1;           /* Bufferable */
+    unsigned int c:1;           /* Cacheable */
+    unsigned int ap:2;          /* AP[1:0] */
+    unsigned int sbz:3;         /* Should be zero */
+    unsigned int ro:1;          /* AP[2] */
+    unsigned int s:1;           /* Shareable */
+    unsigned int ng:1;          /* Non-global */
+    unsigned int tex:3;         /* TEX[2:0] */
+    unsigned int xn:1;          /* Execute Never */
+    unsigned int base:16;       /* Large page base address */
+} pte_sd_l2desc_lpage_t;
+
+/*
+ * Comprises the bits required to walk page tables adhering to the
+ * short-descriptor translation table format.
+ */
+typedef struct __packed {
+    unsigned int dt:2;          /* Descriptor type */
+    unsigned int pad1:8;
+    unsigned int base:22;       /* Base address of block or next table */
+} pte_sd_walk_t;
+
+/*
+ * Represents page table entries adhering to the short-descriptor translation
+ * table format.
+ */
+typedef union {
+    uint32_t bits;
+    pte_sd_walk_t walk;
+    pte_sd_l1desc_sec_t sec;
+    pte_sd_l1desc_supersec_t supersec;
+    pte_sd_l2desc_page_t pg;
+    pte_sd_l2desc_lpage_t lpg;
+} pte_sd_t;
+
 /* Standard entry type that we'll use to build Xen's own pagetables.
  * We put the same permissions at every level, because they're ignored
  * by the walker in non-leaf entries. */
