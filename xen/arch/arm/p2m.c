@@ -1441,6 +1441,9 @@ struct page_info *get_page_from_gva(struct vcpu *v, vaddr_t va,
     if ( unlikely(!get_page(page, d)) )
         page = NULL;
 
+    /* TEST */
+    p2m_mem_access_check_and_get_page(va, flags, v);
+    /* TEST END */
 err:
     if ( !page && p2m->mem_access_enabled )
         page = p2m_mem_access_check_and_get_page(va, flags, v);
@@ -1553,10 +1556,11 @@ static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
                              unsigned int *perm_ro)
 {
     int disabled = 1;
-    uint64_t mask;
-    pte_t pte, *table;
-    mfn_t mfn;
     int32_t ttbr;
+//    mfn_t mfn;
+    paddr_t mask;
+    pte_t pte, *table;
+    struct page_info *page;
     register_t ttbcr = READ_SYSREG(TCR_EL1);
     unsigned int level = 0, n = ttbcr & TTBCR_N_MASK;
     struct domain *d = p2m->domain;
@@ -1591,42 +1595,64 @@ static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
         return -EFAULT;
 
     mask = (1ULL << (14 - n)) - 1;
+#if 0
     mfn = p2m_lookup(d, _gfn(paddr_to_pfn(ttbr & ~mask)), NULL);
 
     /* Check, whether TTBR holds a valid address. */
     if ( mfn_eq(mfn, INVALID_MFN) )
+        return -EFAULT;
+#endif
+    page = get_page_from_gfn(d, paddr_to_pfn(ttbr & ~mask), NULL, P2M_ALLOC);
+    if ( !page )
         return -EFAULT;
 
     /*
      * XXX: The 2nd level lookup table might comprise 4 concatenated 4K
      * pages.  Check how to map concatenated tables at once.
      */
-    table = map_domain_page(mfn);
+//    table = map_domain_page(mfn);
+    table = __map_domain_page(page);
 
     /* Consider offset if n > 2. */
     if ( n > 2 )
         table = (pte_t *)((unsigned long)table | (unsigned long)(ttbr & mask));
 
     pte = table[offsets[level]];
+        
+    unmap_domain_page(table);
+    put_page(page);
 
     switch ( pte.walk.dt ) {
     case 0: /* Invalid mapping. */
+//        unmap_domain_page(table);
+//        put_page(page);
+
         return -EFAULT;
 
     case 1: /* Large or small page. */
         level++;
+#if 0
         mfn = p2m_lookup(d, _gfn(pte.walk.base >> 2), NULL);
 
         unmap_domain_page(table);
+        put_page(page);
 
         /* Check, whether the pte holds a valid address. */
         if ( mfn_eq(mfn, INVALID_MFN) )
             return -EFAULT;
+#endif
+        page = get_page_from_gfn(d, (pte.walk.base >> 2), NULL, P2M_ALLOC);
+        if ( !page )
+            return -EFAULT;
 
-        table = map_domain_page(mfn);
+//        table = map_domain_page(mfn);
+        table = __map_domain_page(page);
         table = (pte_t *)((unsigned long)table | ((pte.walk.base & 0x3) << 10));
 
         pte = table[offsets[level]];
+
+        unmap_domain_page(table);
+        put_page(page);
 
         if ( pte.walk.dt == 0 )
             break;
@@ -1670,8 +1696,6 @@ static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
         *perm_ro = (pte.bits & 0x8000) >> 15;
     }
 
-    unmap_domain_page(table);
-
     if ( pte.walk.dt == 0 )
         return -EFAULT;
 
@@ -1700,14 +1724,15 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
                              unsigned int *perm_ro)
 {
     int t0_sz, t1_sz, disabled = 1;
-    unsigned int level;
-    unsigned int gran;
+    unsigned int level, gran;
     unsigned int topbit = 0, input_size = 0, output_size;
-    uint64_t ttbr = 0, mask, ips;
+    uint64_t ttbr = 0, ips;
+//    mfn_t mfn;
+    paddr_t mask;
+    lpae_t pte, *table;
+    struct page_info *page;
     register_t tcr = READ_SYSREG(TCR_EL1);
     struct domain *d = p2m->domain;
-    lpae_t pte, *table;
-    mfn_t mfn;
 
     const vaddr_t offsets[4][3] = {
         {
@@ -1935,33 +1960,49 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
     if ( output_size != 48 && (ttbr & mask) )
         return -EFAULT;
 
-    mfn = p2m_lookup(d, _gfn(paddr_to_pfn(ttbr & ((1ULL << output_size) - 1))), NULL);
+    mask = ((1ULL << output_size) - 1);
+#if 0
+    mfn = p2m_lookup(d, _gfn(paddr_to_pfn(ttbr & mask)), NULL);
 
     /* Check, whether TTBR holds a valid address. */
     if ( mfn_eq(mfn, INVALID_MFN) )
         return -EFAULT;
 
     table = map_domain_page(mfn);
+#endif
+    page = get_page_from_gfn(d, paddr_to_pfn(ttbr & mask), NULL, P2M_ALLOC);
+    if ( !page )
+        return -EFAULT;
+
+    table = __map_domain_page(page);
 
     for ( ; ; level++ )
     {
         pte = table[offsets[level][gran]];
 
+        unmap_domain_page(table);
+        put_page(page);
+
         if ( level == 3 || !pte.walk.valid || !pte.walk.table )
             break;
 
+#if 0
         mfn = p2m_lookup(d, _gfn(pte.walk.base), NULL);
 
         unmap_domain_page(table);
+        put_page(page);
 
         /* Check, whether the pte holds a valid address. */
         if ( mfn_eq(mfn, INVALID_MFN) )
             return -EFAULT;
+#endif
+        page = get_page_from_gfn(d, pte.walk.base, NULL, P2M_ALLOC);
+        if ( !page )
+            return -EFAULT;
 
-        table = map_domain_page(mfn);
+//        table = map_domain_page(mfn);
+        table = __map_domain_page(page);
     }
-
-    unmap_domain_page(table);
 
     if ( !pte.walk.valid || ((level == 3) & !pte.walk.table) )
 /* TEST */

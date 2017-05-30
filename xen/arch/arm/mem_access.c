@@ -103,6 +103,9 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag,
     long rc;
     unsigned int perm_ro;
     paddr_t ipa;
+/* TEST */
+    paddr_t ipa2 = 0;
+/* TEST END */
     gfn_t gfn;
     mfn_t mfn;
     xenmem_access_t xma;
@@ -130,6 +133,15 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag,
         if ( ((flag & GV2M_WRITE) == GV2M_WRITE) && perm_ro )
             goto err;
     }
+
+/* TEST */
+    rc = p2m_walk_gpt(p2m, gva, &ipa2, &perm_ro);
+    if ( rc < 0 || v->domain->domain_id || ipa != ipa2 )
+    {
+        printk("[p2m_mem_access_check_and_get_page] dom%d: rc=%d ipa=%"PRIpaddr" vs. ipa2=%"PRIpaddr"\n",
+                v->domain->domain_id, (int)rc, ipa, ipa2);
+    }
+/* TEST END */
 
     gfn = _gfn(paddr_to_pfn(ipa));
 
