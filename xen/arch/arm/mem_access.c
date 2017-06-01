@@ -105,6 +105,9 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag,
     paddr_t ipa;
 /* TEST */
     paddr_t ipa2 = 0;
+//    paddr_t ipa3 = 0;
+//    vaddr_t gva2;
+//    static int tested = 0;
 /* TEST END */
     gfn_t gfn;
     mfn_t mfn;
@@ -135,12 +138,41 @@ p2m_mem_access_check_and_get_page(vaddr_t gva, unsigned long flag,
     }
 
 /* TEST */
-    rc = p2m_walk_gpt(p2m, gva, &ipa2, &perm_ro);
-    if ( rc < 0 || v->domain->domain_id || ipa != ipa2 )
+//#if 0
+    if ( v->domain->domain_id )
     {
+        rc = p2m_walk_gpt(p2m, gva, &ipa2, &perm_ro);
+        if ( rc < 0 || ipa != ipa2 )
+        {
+            printk("[p2m_mem_access_check_and_get_page] dom%d: ERROR rc=%d ipa=%"PRIpaddr" vs. ipa2=%"PRIpaddr"\n",
+                    v->domain->domain_id, (int)rc, ipa, ipa2);
+        }
+
         printk("[p2m_mem_access_check_and_get_page] dom%d: rc=%d ipa=%"PRIpaddr" vs. ipa2=%"PRIpaddr"\n",
                 v->domain->domain_id, (int)rc, ipa, ipa2);
+#if 0
+        if ( !tested )
+        {
+            for ( gva2=0; gva2<0x00fff000; gva2+=(1<<12) )
+            {
+                ipa2 = 0;
+                ipa3 = 0;
+                gva_to_ipa(gva, &ipa2, flag);
+                p2m_walk_gpt(p2m, gva2, &ipa3, &perm_ro);
+                if ( ipa3 != ipa2 )
+                {
+                    printk("[p2m_mem_access_check_and_get_page] TESTING dom%d: "
+                           "ERROR rc=%d ipa=%"PRIpaddr" vs. ipa2=%"PRIpaddr"\n",
+                            v->domain->domain_id, (int)rc, ipa2, ipa3);
+                }
+
+            }
+
+            tested = 1;
+        }
+#endif
     }
+//#endif
 /* TEST END */
 
     gfn = _gfn(paddr_to_pfn(ipa));

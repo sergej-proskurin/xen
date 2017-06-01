@@ -221,14 +221,20 @@
 
 #define TCR_RES1        (_AC(1,UL)<<31|_AC(1,UL)<<23)
 
-#define TCR_IPS_MAX     48
-#define TCR_IPS_MIN     25
-
 #else
 
 #define TCR_RES1        (_AC(1,UL)<<31)
 
 #endif
+
+#define IPS_MIN         (25)
+#define IPS_MAX         (48)
+#define IPS_32_BIT      (32)
+#define IPS_36_BIT      (36)
+#define IPS_40_BIT      (40)
+#define IPS_42_BIT      (42)
+#define IPS_44_BIT      (44)
+#define IPS_48_BIT      (48)
 
 
 /* VTCR: Stage 2 Translation Control */

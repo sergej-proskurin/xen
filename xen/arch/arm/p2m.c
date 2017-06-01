@@ -1631,21 +1631,11 @@ static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
 
     case 1: /* Large or small page. */
         level++;
-#if 0
-        mfn = p2m_lookup(d, _gfn(pte.walk.base >> 2), NULL);
-
-        unmap_domain_page(table);
-        put_page(page);
-
-        /* Check, whether the pte holds a valid address. */
-        if ( mfn_eq(mfn, INVALID_MFN) )
-            return -EFAULT;
-#endif
+        
         page = get_page_from_gfn(d, (pte.walk.base >> 2), NULL, P2M_ALLOC);
         if ( !page )
             return -EFAULT;
 
-//        table = map_domain_page(mfn);
         table = __map_domain_page(page);
         table = (pte_t *)((unsigned long)table | ((pte.walk.base & 0x3) << 10));
 
@@ -1701,11 +1691,14 @@ static int __p2m_walk_gpt_sd(struct p2m_domain *p2m,
 
 /* TEST */
 #if 0
-        printk("[ 2] __p2m_walk_gpt_sd: \n"
+    if ( d->domain_id )
+    {
+        printk("[ 2] dom%d __p2m_walk_gpt_sd: \n"
                "                          ttbcr=0x%"PRIregister"\n"
                "                          n=%d\n"
                "                          gva=0x%"PRIvaddr"\n",
-               ttbcr, n, gva);
+               d->domain_id, ttbcr, n, gva);
+    }
 #endif
 /* TEST END */
 
@@ -1727,7 +1720,6 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
     unsigned int level, gran;
     unsigned int topbit = 0, input_size = 0, output_size;
     uint64_t ttbr = 0, ips;
-//    mfn_t mfn;
     paddr_t mask;
     lpae_t pte, *table;
     struct page_info *page;
@@ -1830,12 +1822,12 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
         {
             input_size = REGISTER_WIDTH_64_BIT - t0_sz;
 
-            if ( input_size > TCR_IPS_MAX )
+            if ( input_size > IPS_MAX )
                 /* We limit the input_size to be max 48 bit. */
-                input_size = TCR_IPS_MAX;
-            else if ( input_size < TCR_IPS_MIN )
+                input_size = IPS_MAX;
+            else if ( input_size < IPS_MIN )
                 /* We limit the input_size to be max 25 bit. */
-                input_size = TCR_IPS_MIN;
+                input_size = IPS_MIN;
 
             /* Normalize granule size. */
             switch ( tcr & TCR_TG0_MASK ) {
@@ -1859,12 +1851,12 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
         {
             input_size = REGISTER_WIDTH_64_BIT - t1_sz;
 
-            if ( input_size > TCR_IPS_MAX )
+            if ( input_size > IPS_MAX )
                 /* We limit the input_size to be max 48 bit. */
-                input_size = TCR_IPS_MAX;
-            else if ( input_size < TCR_IPS_MIN )
+                input_size = IPS_MAX;
+            else if ( input_size < IPS_MIN )
                 /* We limit the input_size to be max 25 bit. */
-                input_size = TCR_IPS_MIN;
+                input_size = IPS_MIN;
 
             /* Normalize granule size. */
             switch ( tcr & TCR_TG1_MASK ) {
@@ -1933,43 +1925,34 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
 
         switch (ips) {
         case TCR_IPS_32_BIT:
-            output_size = 32;
+            output_size = IPS_32_BIT;
             break;
         case TCR_IPS_36_BIT:
-            output_size = 36;
+            output_size = IPS_36_BIT;
             break;
         case TCR_IPS_40_BIT:
-            output_size = 40;
+            output_size = IPS_40_BIT;
             break;
         case TCR_IPS_42_BIT:
-            output_size = 42;
+            output_size = IPS_42_BIT;
             break;
         case TCR_IPS_44_BIT:
-            output_size = 44;
+            output_size = IPS_44_BIT;
             break;
         case TCR_IPS_48_BIT:
         default:
-            output_size = 48;
+            output_size = IPS_48_BIT;
         }
     }
     else
-        output_size = 40;
+        output_size = IPS_40_BIT;
 
     /* Make sure the base address does not exceed its configured size. */
-    mask = ((1ULL << 48) - 1) & ~((1ULL << output_size) - 1);
-    if ( output_size != 48 && (ttbr & mask) )
+    mask = ((1ULL << IPS_48_BIT) - 1) & ~((1ULL << output_size) - 1);
+    if ( output_size != IPS_48_BIT && (ttbr & mask) )
         return -EFAULT;
 
     mask = ((1ULL << output_size) - 1);
-#if 0
-    mfn = p2m_lookup(d, _gfn(paddr_to_pfn(ttbr & mask)), NULL);
-
-    /* Check, whether TTBR holds a valid address. */
-    if ( mfn_eq(mfn, INVALID_MFN) )
-        return -EFAULT;
-
-    table = map_domain_page(mfn);
-#endif
     page = get_page_from_gfn(d, paddr_to_pfn(ttbr & mask), NULL, P2M_ALLOC);
     if ( !page )
         return -EFAULT;
@@ -1986,21 +1969,10 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
         if ( level == 3 || !pte.walk.valid || !pte.walk.table )
             break;
 
-#if 0
-        mfn = p2m_lookup(d, _gfn(pte.walk.base), NULL);
-
-        unmap_domain_page(table);
-        put_page(page);
-
-        /* Check, whether the pte holds a valid address. */
-        if ( mfn_eq(mfn, INVALID_MFN) )
-            return -EFAULT;
-#endif
         page = get_page_from_gfn(d, pte.walk.base, NULL, P2M_ALLOC);
         if ( !page )
             return -EFAULT;
 
-//        table = map_domain_page(mfn);
         table = __map_domain_page(page);
     }
 
@@ -2008,7 +1980,7 @@ static int __p2m_walk_gpt_ld(struct p2m_domain *p2m,
 /* TEST */
     {
 //#if 0
-        printk("[ 2] __p2m_walk_gpt_lpae: \n"
+        printk("[ 2] __p2m_walk_gpt_ld: \n"
                "                          tcr=0x%"PRIregister"\n"
                "                          t0sz=%d t1sz=%d\n"
                "                          gva=0x%"PRIvaddr"\n"
