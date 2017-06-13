@@ -198,6 +198,33 @@ static inline int p2m_is_write_locked(struct p2m_domain *p2m)
     return rw_is_write_locked(&p2m->lock);
 }
 
+/*
+ * Helpers to lookup properties of ptes.
+ */
+
+static inline bool_t p2m_valid(lpae_t pte)
+{
+    return pte.p2m.valid;
+}
+/*
+ * These two can only be used on L0..L2 ptes because L3 mappings set
+ * the table bit and therefore these would return the opposite to what
+ * you would expect.
+ */
+static inline bool_t p2m_table(lpae_t pte)
+{
+    return p2m_valid(pte) && pte.p2m.table;
+}
+static inline bool_t p2m_mapping(lpae_t pte)
+{
+    return p2m_valid(pte) && !pte.p2m.table;
+}
+
+static inline bool p2m_is_superpage(lpae_t pte, unsigned int level)
+{
+    return (level < 3) && p2m_mapping(pte);
+}
+
 /* Look up the MFN corresponding to a domain's GFN. */
 mfn_t p2m_lookup(struct domain *d, gfn_t gfn, p2m_type_t *t);
 
