@@ -20,6 +20,7 @@
 #define _IOMMU_H_
 
 #include <xen/init.h>
+#include <xen/lib.h>
 #include <xen/spinlock.h>
 #include <xen/pci.h>
 #include <public/hvm/ioreq.h>
@@ -41,12 +42,10 @@ extern unsigned int iommu_dev_iotlb_timeout;
 #define IOMMU_PAGE_MASK(sz) (~(u64)0 << PAGE_SHIFT_##sz)
 #define IOMMU_PAGE_ALIGN(sz, addr)  (((addr) + ~PAGE_MASK_##sz) & PAGE_MASK_##sz)
 
-#define PAGE_SHIFT_4K       (12)
 #define PAGE_SIZE_4K        IOMMU_PAGE_SIZE(4K)
 #define PAGE_MASK_4K        IOMMU_PAGE_MASK(4K)
 #define PAGE_ALIGN_4K(addr) IOMMU_PAGE_ALIGN(4K, addr)
 
-#define PAGE_SHIFT_64K          (16)
 #define PAGE_SIZE_64K           IOMMU_PAGE_SIZE(64K)
 #define PAGE_MASK_64K           IOMMU_PAGE_MASK(64K)
 #define PAGE_ALIGN_64K(addr)    IOMMU_PAGE_ALIGN(64K, addr)

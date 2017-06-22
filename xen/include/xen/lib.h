@@ -8,6 +8,10 @@
 #include <xen/string.h>
 #include <asm/bug.h>
 
+#define PAGE_SHIFT_4K           (12)
+#define PAGE_SHIFT_16K          (14)
+#define PAGE_SHIFT_64K          (16)
+
 #define BUG_ON(p)  do { if (unlikely(p)) BUG();  } while (0)
 #define WARN_ON(p) do { if (unlikely(p)) WARN(); } while (0)
 
