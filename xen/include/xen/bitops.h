@@ -10,6 +10,9 @@
 #define GENMASK(h, l) \
     (((~0UL) << (l)) & (~0UL >> (BITS_PER_LONG - 1 - (h))))
 
+#define GENMASK_ULL(h, l) \
+    (((~0ULL) << (l)) & (~0ULL >> (BITS_PER_LONG_LONG - 1 - (h))))
+
 /*
  * ffs: find first bit set. This is defined the same way as
  * the libc and compiler builtin ffs routines, therefore
@@ -128,7 +131,7 @@ static inline int generic_fls64(__u64 x)
 static __inline__ int get_bitmask_order(unsigned int count)
 {
     int order;
-    
+
     order = fls(count);
     return order;   /* We could be slightly more clever with -1 here... */
 }
