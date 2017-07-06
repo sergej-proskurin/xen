@@ -123,11 +123,11 @@ unsigned long raw_copy_from_guest(void *to, const void __user *from, unsigned le
  * Temporarily map one physical guest page and copy data to or from it.
  * The data to be copied cannot cross a page boundary.
  */
-int vgic_access_guest_memory(struct domain *d, paddr_t gpa, void *buf,
-                             uint32_t size, bool is_write)
+int access_guest_memory_by_ipa(struct domain *d, paddr_t ipa, void *buf,
+                               uint32_t size, bool is_write)
 {
     struct page_info *page;
-    uint64_t offset = gpa & ~PAGE_MASK;  /* Offset within the mapped page */
+    uint64_t offset = ipa & ~PAGE_MASK;  /* Offset within the mapped page */
     p2m_type_t p2mt;
     void *p;
 
@@ -139,7 +139,7 @@ int vgic_access_guest_memory(struct domain *d, paddr_t gpa, void *buf,
         return -EINVAL;
     }
 
-    page = get_page_from_gfn(d, paddr_to_pfn(gpa), &p2mt, P2M_ALLOC);
+    page = get_page_from_gfn(d, paddr_to_pfn(ipa), &p2mt, P2M_ALLOC);
     if ( !page )
     {
         printk(XENLOG_G_ERR "d%d: vITS: Failed to get table entry\n",
