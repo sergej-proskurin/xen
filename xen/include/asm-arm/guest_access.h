@@ -3,7 +3,7 @@
 
 #include <xen/guest_access.h>
 #include <xen/errno.h>
-#include <xen/types.h>
+//#include <xen/types.h>
 
 unsigned long raw_copy_to_guest(void *to, const void *from, unsigned len);
 unsigned long raw_copy_to_guest_flush_dcache(void *to, const void *from,
