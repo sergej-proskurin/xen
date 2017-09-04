@@ -282,6 +282,8 @@ struct arch_vcpu
     struct vtimer phys_timer;
     struct vtimer virt_timer;
     bool_t vtimer_initialized;
+
+    bool single_step;
 }  __cacheline_aligned;
 
 void vcpu_show_execution_state(struct vcpu *);
