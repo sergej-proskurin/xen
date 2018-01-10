@@ -383,6 +383,10 @@ static inline gfn_t gfn_next_boundary(gfn_t gfn, unsigned int order)
     return gfn_add(gfn, 1UL << order);
 }
 
+/* Translate gva into ipa based on the VTTBR of the given p2m. */
+int p2m_gva_to_ipa(struct p2m_domain *p2m, vaddr_t gva, paddr_t *ipa,
+                   unsigned int flags);
+
 #endif /* _XEN_P2M_H */
 
 /*
