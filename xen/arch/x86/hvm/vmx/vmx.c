@@ -2157,8 +2157,7 @@ static void vmx_vcpu_update_eptp(struct vcpu *v)
 
     __vmwrite(EPT_POINTER, ept->eptp);
 
-    if ( v->arch.hvm_vmx.secondary_exec_control &
-         SECONDARY_EXEC_ENABLE_VIRT_EXCEPTIONS )
+    if ( cpu_has_vmx_virt_exceptions )
         __vmwrite(EPTP_INDEX, vcpu_altp2m(v).p2midx);
 
     vmx_vmcs_exit(v);
