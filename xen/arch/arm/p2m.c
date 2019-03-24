@@ -39,10 +39,10 @@ static unsigned int __read_mostly max_vmid = MAX_VMID_8_BIT;
 #define P2M_ROOT_PAGES    (1<<P2M_ROOT_ORDER)
 
 /* Override macros from asm/mm.h to make them work with mfn_t */
-#undef mfn_to_page
-#define mfn_to_page(mfn) __mfn_to_page(mfn_x(mfn))
-#undef page_to_mfn
-#define page_to_mfn(pg) _mfn(__page_to_mfn(pg))
+//#undef mfn_to_page
+//#define mfn_to_page(mfn) __mfn_to_page(mfn_x(mfn))
+//#undef page_to_mfn
+//#define page_to_mfn(pg) _mfn(__page_to_mfn(pg))
 
 #define p2m_switch_vttbr_and_get_flags(ovttbr, nvttbr, flags)       \
 ({                                                                  \
@@ -130,8 +130,8 @@ void dump_p2m_lookup(struct domain *d, paddr_t addr)
 
             p2m = d->arch.altp2m_p2m[i];
 
-            printk("AP2M[%u] @ %p mfn:%lx\n",
-                    i, p2m->root, __page_to_mfn(p2m->root));
+            printk("AP2M[%u] @ %p mfn:%#"PRI_mfn"\n",
+                    i, p2m->root, mfn_to_pdx(page_to_mfn(p2m->root)));
 
             dump_pt_walk(page_to_maddr(p2m->root), addr, P2M_ROOT_LEVEL, P2M_ROOT_PAGES);
             printk("\n");
